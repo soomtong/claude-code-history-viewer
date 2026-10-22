@@ -1,0 +1,46 @@
+// 증분 리더: 마지막으로 읽은 오프셋 이후의 완결된 줄만 돌려준다.
+// 개행 없는 꼬리는 다음 호출까지 보류하고, 파일이 오프셋보다 작아지면 처음부터 다시 읽는다.
+import "go:bytes"
+import "go:io"
+import "go:os"
+
+pub struct Tail {
+  pub path: string,
+  pub offset: int64,
+}
+
+pub struct TailRead {
+  pub lines: Slice<string>,
+  pub reset: bool, // 파일이 줄어들어(truncate/재작성) 처음부터 다시 읽었는지
+}
+
+pub fn new_tail(path: string) -> Tail {
+  Tail { path, offset: 0 }
+}
+
+impl Tail {
+  pub fn read_lines(self: mut Ref<Self>) -> Result<TailRead, error> {
+    let file = os.Open(self.path)?
+    defer file.Close()
+    let info = file.Stat()?
+    let size = info.Size()
+    let mut reset = false
+    if size < self.offset {
+      self.offset = 0
+      reset = true
+    }
+    if size == self.offset { return Ok(TailRead { lines: [], reset }) }
+    let _ = file.Seek(self.offset, io.SeekStart)?
+    let data = match io.ReadAll(file) {
+      Partial.Ok(d) => d,
+      Partial.Err(e) => return Err(e),
+      Partial.Both(_, e) => return Err(e),
+    }
+    let Some(last) = bytes.LastIndexByte(data, 10) else {
+      return Ok(TailRead { lines: [], reset })
+    }
+    self.offset += (last + 1) as int64
+    let chunk = data[..last] as string
+    Ok(TailRead { lines: chunk.split("\n"), reset })
+  }
+}

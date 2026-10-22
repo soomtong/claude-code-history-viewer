@@ -1,0 +1,84 @@
+// 대화 뷰 검색 (Phase 3). 하이라이트 치환은 하지 않고, ANSI 를 벗긴 줄에서 매치 줄을 찾아
+// 그 위치로 점프하고 "i/m" 카운트를 보여준다 (docs/decisions/0007).
+import "go:github.com/charmbracelet/bubbletea"
+import "go:github.com/charmbracelet/x/ansi"
+import "go:strings"
+
+impl App {
+  pub fn search_active(self: Ref<Self>) -> bool {
+    self.search != ""
+  }
+
+  /// 렌더된 내용에서 검색어가 있는 줄 번호들을 다시 구한다.
+  pub fn update_matches(self: mut Ref<Self>) {
+    let mut found = Slice.new<int>()
+    let q = strings.ToLower(self.search)
+    if q != "" {
+      if self.plain_lines.is_empty() {
+        self.plain_lines = strings.ToLower(ansi.Strip(self.content)).split("\n")
+      }
+      for (i, line) in self.plain_lines.enumerate() {
+        if line.contains(q) { found = found.append(i) }
+      }
+    }
+    self.matches = found
+  }
+
+  /// dir=1 이면 현재 줄 다음 매치, -1 이면 이전 매치. 끝에서는 반대쪽으로 돈다.
+  pub fn jump_match(self: mut Ref<Self>, dir: int, include_current: bool) {
+    let n = self.matches.length()
+    if n == 0 { return }
+    let y = self.vp.YOffset()
+    let mut pick = if dir > 0 { 0 } else { n - 1 }
+    if dir > 0 {
+      for (i, line) in self.matches.enumerate() {
+        if line > y || (include_current && line == y) {
+          pick = i
+          break
+        }
+      }
+    } else {
+      for (i, line) in self.matches.enumerate() {
+        if line < y { pick = i }
+      }
+    }
+    self.match_idx = pick
+    self.vp.SetYOffset(self.matches[pick])
+  }
+
+  pub fn on_search_key(self: mut Ref<Self>, key: tea.KeyMsg, k: string) {
+    match k {
+      "esc" => {
+        self.search = ""
+        self.search_editing = false
+        self.matches = []
+        return
+      },
+      "enter" => {
+        self.search_editing = false
+        return
+      },
+      "backspace" => self.search = backspace(self.search),
+      _ => {
+        let Some(s) = typed(key) else {
+          return
+        }
+        self.search += s
+      },
+    }
+    self.update_matches()
+    self.jump_match(1, true)
+    self.ensure_rendered()
+  }
+
+  pub fn search_status(self: Ref<Self>) -> string {
+    if !self.search_editing && self.search == "" { return "" }
+    let cursor = if self.search_editing { "▏" } else { "" }
+    let count = if self.matches.is_empty() {
+      "매치 없음"
+    } else {
+      f"{self.match_idx + 1}/{self.matches.length()}"
+    }
+    f"/{self.search}{cursor}  [{count}]"
+  }
+}

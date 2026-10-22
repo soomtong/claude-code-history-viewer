@@ -1,0 +1,155 @@
+// 세션 삭제. 화이트리스트 방식: `<root>/<proj>/<uuid>.jsonl` 과 그 부속
+// (`<uuid>/` 디렉터리, `<uuid>.desktop-released.json`) 만 대상. 기본은 휴지통 이동.
+// 규칙은 docs/decisions/0005-delete.md 참고.
+import "go:errors"
+import "go:io/fs"
+import "go:os"
+import "go:path/filepath"
+import "go:strings"
+import "go:time"
+
+/// 최근 이 시간(초) 안에 수정된 세션은 실행 중으로 보고 삭제를 막는다.
+pub const RECENT_SECS = 30
+
+pub struct DeletePlan {
+  pub session_id: string,
+  pub project: string,
+  pub items: Slice<string>, // 실제로 옮기거나 지울 경로 (첫 항목은 항상 jsonl)
+  pub blocked: Option<string>, // 삭제를 막는 이유 (있으면 실행 불가)
+  pub purge: bool,
+  pub trash_dir: string, // 휴지통 이동 시 목적지 디렉터리
+}
+
+fn fail(msg: string) -> Result<DeletePlan, error> {
+  Err(errors.New(msg))
+}
+
+fn is_symlink(info: fs.FileInfo) -> bool {
+  info.Mode() & fs.ModeSymlink != 0
+}
+
+/// 경로를 검증하고 삭제 계획을 만든다. 검증 실패는 Err, 정책상 차단은 blocked 로 돌려준다.
+/// - root: projects 디렉터리, trash_root: 휴지통 기준(`~/.Trash/cci`)
+/// - open_id: 현재 열람 중인 세션 id ("" 이면 없음)
+pub fn plan_delete(
+  root: string,
+  path: string,
+  purge: bool,
+  open_id: string,
+  trash_root: string,
+  now: time.Time,
+) -> Result<DeletePlan, error> {
+  if !filepath.IsAbs(path) || !filepath.IsAbs(root) {
+    return fail("절대 경로가 아닙니다")
+  }
+  if path.contains("/../") || path.ends_with("/..") {
+    return fail("경로에 .. 이 있습니다")
+  }
+  let clean_root = filepath.Clean(root)
+  let clean = filepath.Clean(path)
+  let name = filepath.Base(clean)
+  if !is_session_file(name) {
+    return fail(f"세션 파일 이름이 아닙니다: {name}")
+  }
+  let proj_dir = filepath.Dir(clean)
+  let project = filepath.Base(proj_dir)
+  if filepath.Dir(proj_dir) != clean_root {
+    return fail("projects/<프로젝트>/<세션>.jsonl 위치가 아닙니다")
+  }
+  if project == "." || project == ".." || project == "memory" || project.starts_with(
+    ".",
+  ) {
+    return fail(f"허용되지 않는 프로젝트 디렉터리: {project}")
+  }
+  let info = os.Lstat(clean)?
+  if is_symlink(info) { return fail("심볼릭 링크는 삭제하지 않습니다") }
+  if !info.Mode().IsRegular() { return fail("일반 파일이 아닙니다") }
+  // 실경로가 projects 하위의 같은 위치인지 재확인 (상위 디렉터리 심링크 차단)
+  let real_root = filepath.EvalSymlinks(clean_root)?
+  let real = filepath.EvalSymlinks(clean)?
+  let expected = filepath.Join(real_root, project, name)
+  if filepath.Clean(real) != expected {
+    return fail("실경로가 projects 하위가 아닙니다")
+  }
+  let id = strings.TrimSuffix(name, ".jsonl")
+  let mut items = [clean]
+  let sub = filepath.Join(proj_dir, id)
+  if let Ok(si) = os.Lstat(sub) {
+    if is_symlink(si) || !si.IsDir() {
+      return fail(f"부속 경로가 디렉터리가 아니거나 심볼릭 링크입니다: {id}/")
+    }
+    items = items.append(sub)
+  }
+  let released = filepath.Join(proj_dir, id + ".desktop-released.json")
+  if let Ok(ri) = os.Lstat(released) {
+    if is_symlink(ri) || !ri.Mode().IsRegular() {
+      return fail("부속 파일이 일반 파일이 아닙니다: desktop-released.json")
+    }
+    items = items.append(released)
+  }
+  let mut blocked: Option<string> = None
+  let age = now.Sub(info.ModTime())
+  if age < (RECENT_SECS as time.Duration) * time.Second {
+    blocked = Some(
+      f"최근 {RECENT_SECS}초 안에 수정된 세션입니다(실행 중일 수 있음)",
+    )
+  }
+  if open_id != "" && strings.EqualFold(open_id, id) {
+    blocked = Some("현재 열람 중인 세션입니다")
+  }
+  let stamp = now.Format("20060102-150405")
+  Ok(
+    DeletePlan {
+      session_id: id,
+      project,
+      items,
+      blocked,
+      purge,
+      trash_dir: filepath.Join(trash_root, stamp, project),
+    },
+  )
+}
+
+/// 기본 휴지통 기준 경로: `~/.Trash/cci`
+pub fn default_trash_root() -> Result<string, error> {
+  let home = os.UserHomeDir()?
+  Ok(filepath.Join(home, ".Trash", "cci"))
+}
+
+/// 계획을 실행한다. 실행 직전에 다시 검증하고, 처리한 경로 목록을 돌려준다.
+pub fn execute_delete(
+  root: string,
+  plan: DeletePlan,
+  trash_root: string,
+  now: time.Time,
+) -> Result<Slice<string>, error> {
+  if let Some(reason) = plan.blocked { return Err(errors.New(reason)) }
+  let Some(jsonl) = plan.items.get(0) else {
+    return Err(errors.New("삭제 대상이 없습니다"))
+  }
+  // 모달을 띄운 사이 상태가 바뀌었을 수 있으므로 다시 검증한다 (열람 중 판정은 계획 시점 기준)
+  let fresh = plan_delete(root, jsonl, plan.purge, "", trash_root, now)?
+  if !fresh.items.equals(plan.items) {
+    return Err(errors.New("삭제 대상이 바뀌었습니다. 다시 시도하세요"))
+  }
+  if let Some(reason) = fresh.blocked { return Err(errors.New(reason)) }
+  let mut done: Slice<string> = []
+  if plan.purge {
+    for item in plan.items {
+      let info = os.Lstat(item)?
+      if info.IsDir() { os.RemoveAll(item)? } else { os.Remove(item)? }
+      done = done.append(item)
+    }
+    return Ok(done)
+  }
+  os.MkdirAll(plan.trash_dir, 0o700)?
+  for item in plan.items {
+    let dst = filepath.Join(plan.trash_dir, filepath.Base(item))
+    if let Ok(_) = os.Lstat(dst) {
+      return Err(errors.New(f"휴지통에 같은 이름이 있습니다: {dst}"))
+    }
+    os.Rename(item, dst)?
+    done = done.append(dst)
+  }
+  Ok(done)
+}

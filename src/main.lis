@@ -1,5 +1,178 @@
+// cci: Claude Code 대화 복기용 TUI. CLI 인자, 설정, 모드 분기.
 import "go:fmt"
+import "go:github.com/charmbracelet/bubbletea"
+import "go:os"
+import "go:path/filepath"
+import "go:strings"
+
+import "config"
+import "session"
+import "tui"
+import "watch"
+
+const VERSION = "0.1.0"
+
+const USAGE = "사용법: cci [옵션] [세션 id | 경로.jsonl]
+
+  인자 없이 실행하면 현재 폴더의 Claude Code 세션 목록을 엽니다.
+
+옵션
+  --all            전체 프로젝트의 세션
+  --parent         현재 폴더의 상위/하위 프로젝트 포함 (git worktree 에서 실행할 때)
+  --no-watch       모니터링 끄기 (환경변수 CCI_NO_WATCH=1, 설정 watch = false 와 같음)
+  --watch          설정과 무관하게 모니터링 켜기
+  --purge          삭제 시 휴지통 대신 영구 삭제
+  --theme <이름>   마크다운 테마: dark(기본), light, notty, auto ...
+  --compact        좁은 창용 간결한 화면
+  --list           TUI 없이 세션 목록을 출력
+  --version        버전
+  -h, --help       도움말
+
+설정: ~/.config/cci/config.toml (watch, theme, purge, compact)"
+
+struct Cli {
+  scope: session.Scope,
+  watch: Option<bool>,
+  purge: bool,
+  theme: string,
+  compact: bool,
+  list: bool,
+  target: string,
+}
+
+fn parse_args(args: Slice<string>) -> Result<Cli, string> {
+  let mut cli = Cli {
+    scope: session.Scope.Cwd,
+    watch: None,
+    purge: false,
+    theme: "",
+    compact: false,
+    list: false,
+    target: "",
+  }
+  let mut i = 0
+  while i < args.length() {
+    let a = args[i]
+    match a {
+      "--all" => cli.scope = session.Scope.All,
+      "--parent" => cli.scope = session.Scope.Parent,
+      "--no-watch" => cli.watch = Some(false),
+      "--watch" => cli.watch = Some(true),
+      "--purge" => cli.purge = true,
+      "--compact" => cli.compact = true,
+      "--list" => cli.list = true,
+      "--theme" => {
+        i += 1
+        let Some(v) = args.get(i) else {
+          return Err("--theme 에 값이 필요합니다")
+        }
+        cli.theme = v
+      },
+      "-h" | "--help" => return Err(""),
+      "--version" => return Err("version"),
+      _ => {
+        if a.starts_with("--theme=") {
+          cli.theme = strings.TrimPrefix(a, "--theme=")
+        } else if a.starts_with("-") {
+          return Err(f"알 수 없는 옵션: {a}")
+        } else if cli.target != "" {
+          return Err("세션은 하나만 지정할 수 있습니다")
+        } else {
+          cli.target = a
+        }
+      },
+    }
+    i += 1
+  }
+  Ok(cli)
+}
+
+/// 세션 id 또는 jsonl 경로를 실제 파일 경로로 바꾼다.
+fn resolve_target(root: string, target: string) -> Result<string, string> {
+  if target.ends_with(".jsonl") {
+    let abs = filepath.Abs(target).unwrap_or(target)
+    if os.Stat(abs).is_err() { return Err(f"파일이 없습니다: {target}") }
+    return Ok(abs)
+  }
+  let id = strings.TrimSpace(target)
+  if !session.is_uuid(id) {
+    return Err(f"세션 id(UUID) 또는 .jsonl 경로가 아닙니다: {target}")
+  }
+  match session.find_session(root, id) {
+    Some(p) => Ok(p),
+    None => Err(f"세션을 찾지 못했습니다: {id} ({root})"),
+  }
+}
+
+fn die(msg: string) -> Never {
+  fmt.Fprintln(os.Stderr, f"cci: {msg}")
+  os.Exit(2)
+}
+
+fn print_list(opts: tui.Options) {
+  let dirs = session.project_dirs(opts.root, opts.cwd, opts.scope)
+  for s in session.list_sessions(dirs) {
+    fmt.Println(
+      f"{s.id}\t{tui.fmt_time(s.updated, true)}\t{s.msg_count}/{s.prompt_count}\t{s.cwd}\t{s.title}",
+    )
+  }
+}
 
 fn main() {
-  fmt.Println("Hello world!")
+  let cli = match parse_args(os.Args[1..]) {
+    Ok(c) => c,
+    Err(msg) => {
+      if msg == "" {
+        fmt.Println(USAGE)
+        os.Exit(0)
+      }
+      if msg == "version" {
+        fmt.Println(f"cci {VERSION}")
+        os.Exit(0)
+      }
+      die(f"{msg}\n\n{USAGE}")
+    },
+  }
+  let cfg = match config.load() {
+    Ok(c) => c,
+    Err(e) => die(f"설정 파일 오류 ({config.config_path()}): {e}"),
+  }
+  let root = match session.projects_root() {
+    Ok(r) => r,
+    Err(e) => die(f"홈 디렉터리를 찾지 못했습니다: {e}"),
+  }
+  let cwd = os.Getwd().unwrap_or(".")
+  let open_path = if cli.target == "" {
+    ""
+  } else {
+    match resolve_target(root, cli.target) {
+      Ok(p) => p,
+      Err(msg) => die(msg),
+    }
+  }
+  let theme = if cli.theme != "" { cli.theme } else { cfg.theme }
+  let opts = tui.Options {
+    root,
+    cwd,
+    scope: cli.scope,
+    watch: cli.watch.unwrap_or(cfg.watch),
+    purge: cli.purge || cfg.purge,
+    theme,
+    compact: cli.compact || cfg.compact,
+    open_path,
+    plain: false,
+  }
+  if cli.list {
+    print_list(opts)
+    return
+  }
+  let mut app = tui.new_app(opts)
+  let mut program = tea.NewProgram(&app, tea.WithAltScreen())
+  if opts.watch {
+    let handle = watch.start(app.watch_dirs(), |paths| program.Send(
+      tui.FilesChanged { paths },
+    ))
+    app.set_watch_hook(|dirs| handle.add_dirs(dirs))
+  }
+  if let Err(e) = program.Run() { die(f"{e}") }
 }

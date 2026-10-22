@@ -1,0 +1,843 @@
+// Bubble Tea 모델. 화면: 세션 목록, 대화 뷰, 도움말, 삭제 확인 모달.
+import "go:fmt"
+import "go:github.com/atotto/clipboard"
+import "go:github.com/charmbracelet/bubbletea"
+import "go:github.com/charmbracelet/glamour"
+import "go:github.com/charmbracelet/lipgloss"
+import "go:github.com/soomtong/claude-code-viewer/shim"
+import "go:path/filepath"
+import "go:strings"
+import "go:time"
+
+import "model"
+import "session"
+
+pub struct Options {
+  pub root: string,
+  pub cwd: string,
+  pub scope: session.Scope,
+  pub watch: bool,
+  pub purge: bool,
+  pub theme: string,
+  pub compact: bool,
+  pub open_path: string, // 바로 열 세션 경로 ("" 이면 목록부터)
+  pub plain: bool, // 테스트에서 glamour 를 끄고 평문 렌더만 쓰기
+}
+
+pub enum Screen {
+  #[default]
+  List,
+  Conv,
+}
+
+/// 대화 뷰에서 메시지 하나가 차지하는 줄 범위 (메시지-줄 매핑)
+pub struct Span {
+  pub msg: int, // conv.messages 의 인덱스
+  pub start: int,
+  pub lines: int,
+  pub prompt: bool,
+  pub full: bool, // glamour 까지 적용됐는지 (false 면 평문 자리표시)
+}
+
+/// 리사이즈 디바운스 완료
+struct ResizeDone { generation: int }
+
+pub struct App {
+  pub opts: Options,
+  pub screen: Screen,
+  pub width: int,
+  pub height: int,
+  pub help: bool,
+  pub status: string,
+  pub quitting: bool,
+  // 목록
+  pub scope: session.Scope,
+  pub sessions: mut Slice<model.Session>,
+  pub rows: mut Slice<int>,
+  pub cursor: int,
+  top: int,
+  pub filter: string,
+  pub filter_editing: bool,
+  // 대화
+  pub has_conv: bool,
+  pub conv: mut session.Conversation,
+  tail: session.Tail,
+  pub current: model.Session,
+  vp: mut Ref<shim.Viewport>,
+  pub spans: mut Slice<Span>,
+  pub toggles: Toggles,
+  pub role: RoleFilter,
+  content: string, // viewport 에 넣은 전체 내용
+  plain_lines: mut Slice<string>, // 검색용으로 ANSI 를 벗긴 소문자 줄 (지연 계산)
+  pub search: string,
+  pub search_editing: bool,
+  pub matches: mut Slice<int>,
+  pub match_idx: int,
+  md: Option<Ref<glamour.TermRenderer>>,
+  md_width: int,
+  resize_gen: int,
+  cache: mut Map<string, string>, // 렌더 캐시 (키: cache_key)
+  pub md_renders: int, // glamour 렌더 횟수 (지연 렌더 검증용)
+  // 삭제 확인 모달
+  pub modal: Option<session.DeletePlan>,
+  trash_root: string,
+  // 모니터링
+  pub dirs: Slice<string>,
+  watch_hook: Option<fn(Slice<string>)>,
+  pub follow: bool,
+  pub new_count: int,
+  announced_next: string,
+}
+
+pub fn new_app(opts: Options) -> mut App {
+  // 구조체 리터럴 안에서 Result.unwrap_or 를 쓰면 lis 0.12.4 가 다른 필드의 임시변수를 누락한다 (0005 참고)
+  let trash_root = session.default_trash_root().unwrap_or("")
+  let mut app = App {
+    opts,
+    screen: Screen.List,
+    width: 80,
+    height: 24,
+    help: false,
+    status: "",
+    quitting: false,
+    scope: opts.scope,
+    sessions: [],
+    rows: [],
+    cursor: 0,
+    top: 0,
+    filter: "",
+    filter_editing: false,
+    has_conv: false,
+    conv: session.new_conversation(false),
+    tail: session.new_tail(""),
+    current: model.Session { .. },
+    vp: shim.NewViewport(80, 22),
+    spans: [],
+    toggles: Toggles { .. },
+    role: RoleFilter.All,
+    content: "",
+    plain_lines: [],
+    search: "",
+    search_editing: false,
+    matches: [],
+    match_idx: 0,
+    md: None,
+    md_width: 0,
+    resize_gen: 0,
+    cache: Map.new<string, string>(),
+    md_renders: 0,
+    modal: None,
+    trash_root,
+    dirs: [],
+    watch_hook: None,
+    follow: opts.watch,
+    new_count: 0,
+    announced_next: "",
+  }
+  if opts.open_path != "" {
+    app.open_path(opts.open_path)
+  } else {
+    app.reload_list()
+  }
+  app
+}
+
+fn backspace(s: string) -> string {
+  let rs = s.runes()
+  if rs.length() == 0 { return s }
+  rs[..rs.length() - 1] as string
+}
+
+/// 입력창에 넣을 수 있는 키라면 그 문자열
+fn typed(key: tea.KeyMsg) -> Option<string> {
+  if key.Type == tea.KeyRunes { return Some(key.Runes as string) }
+  if key.Type == tea.KeySpace { return Some(" ") }
+  None
+}
+
+impl App {
+  #[allow(non_snake_case_function)]
+  pub fn Init(self: mut Ref<Self>) -> Option<tea.Cmd> {
+    None
+  }
+
+  #[allow(non_snake_case_function)]
+  pub fn Update(
+    self: mut Ref<Self>,
+    msg: tea.Msg,
+  ) -> (tea.Model, Option<tea.Cmd>) {
+    if let Some(size) = assert_type<tea.WindowSizeMsg>(msg) {
+      return (self, self.on_resize(size.Width, size.Height))
+    }
+    if let Some(done) = assert_type<ResizeDone>(msg) {
+      if done.generation == self.resize_gen && self.has_conv { self.relayout() }
+      return (self, None)
+    }
+    if let Some(key) = assert_type<tea.KeyMsg>(msg) {
+      let cmd = self.on_key(key)
+      return (self, cmd)
+    }
+    if let Some(changed) = assert_type<FilesChanged>(msg) {
+      self.on_files(changed.paths)
+      return (self, None)
+    }
+    if self.screen == Screen.Conv {
+      let cmd = self.vp.Update(msg)
+      self.ensure_rendered()
+      return (self, Some(cmd))
+    }
+    (self, None)
+  }
+
+  #[allow(non_snake_case_function)]
+  pub fn View(self: mut Ref<Self>) -> string {
+    if self.quitting { return "" }
+    if self.help { return self.view_help() }
+    if let Some(plan) = self.modal { return self.view_modal(plan) }
+    match self.screen {
+      Screen.List => self.view_list(),
+      Screen.Conv => self.view_conv(),
+    }
+  }
+
+  fn on_resize(self: mut Ref<Self>, w: int, h: int) -> Option<tea.Cmd> {
+    let first = self.width == 80 && self.height == 24 && self.resize_gen == 0
+    self.width = w
+    self.height = h
+    self.vp.SetSize(w, self.vp_height())
+    self.clamp_list()
+    self.resize_gen += 1
+    if first || !self.has_conv {
+      if self.has_conv { self.relayout() }
+      return None
+    }
+    // 연속 리사이즈는 마지막 것만 다시 렌더한다
+    let generation = self.resize_gen
+    Some(tea.Tick(150 * time.Millisecond, |_| ResizeDone { generation }))
+  }
+
+  pub fn vp_height(self: Ref<Self>) -> int {
+    let chrome = if self.opts.compact { 1 } else { 2 }
+    max(self.height - chrome, 1)
+  }
+
+  fn compact(self: Ref<Self>) -> bool {
+    self.opts.compact || self.width < 60
+  }
+
+  // ---------- 키 ----------
+
+  pub fn on_key(self: mut Ref<Self>, key: tea.KeyMsg) -> Option<tea.Cmd> {
+    let k = key.String()
+    self.status = ""
+    if k == "ctrl+c" {
+      self.quitting = true
+      return Some(tea.Quit)
+    }
+    if self.help {
+      self.help = false
+      return None
+    }
+    if let Some(plan) = self.modal {
+      self.on_modal_key(plan, k)
+      return None
+    }
+    match self.screen {
+      Screen.List => self.on_list_key(key, k),
+      Screen.Conv => self.on_conv_key(key, k),
+    }
+  }
+
+  fn on_list_key(
+    self: mut Ref<Self>,
+    key: tea.KeyMsg,
+    k: string,
+  ) -> Option<tea.Cmd> {
+    if self.filter_editing {
+      match k {
+        "esc" => {
+          self.filter = ""
+          self.filter_editing = false
+        },
+        "enter" => self.filter_editing = false,
+        "backspace" => self.filter = backspace(self.filter),
+        _ => {
+          if let Some(s) = typed(key) { self.filter = self.filter + s }
+        },
+      }
+      self.apply_filter()
+      return None
+    }
+    let page = self.list_height()
+    match k {
+      "q" => {
+        self.quitting = true
+        return Some(tea.Quit)
+      },
+      "?" => self.help = true,
+      "j" | "down" => self.move_cursor(1),
+      "k" | "up" => self.move_cursor(-1),
+      "ctrl+d" => self.move_cursor(page / 2),
+      "ctrl+u" => self.move_cursor(-(page / 2)),
+      "ctrl+f" | "pgdown" | " " => self.move_cursor(page),
+      "ctrl+b" | "pgup" => self.move_cursor(-page),
+      "g" | "home" => self.move_cursor(-self.rows.length()),
+      "G" | "end" => self.move_cursor(self.rows.length()),
+      "enter" | "l" | "right" => {
+        if let Some(s) = self.selected() { self.open_session(s) }
+      },
+      "/" => self.filter_editing = true,
+      "esc" => {
+        self.filter = ""
+        self.apply_filter()
+      },
+      "d" => {
+        if let Some(s) = self.selected() { self.ask_delete(s) }
+      },
+      "R" | "ctrl+r" => {
+        // 새로고침은 열람 중 표시도 해제한다
+        self.has_conv = false
+        self.reload_list()
+        self.status = f"새로고침: {self.sessions.length()}개 세션"
+      },
+      "a" => self.toggle_scope(),
+      "y" => {
+        if let Some(s) = self.selected() { self.copy_resume(s.id) }
+      },
+      _ => (),
+    }
+    None
+  }
+
+  fn on_conv_key(
+    self: mut Ref<Self>,
+    key: tea.KeyMsg,
+    k: string,
+  ) -> Option<tea.Cmd> {
+    if self.search_editing {
+      self.on_search_key(key, k)
+      return None
+    }
+    match k {
+      "q" => {
+        self.quitting = true
+        return Some(tea.Quit)
+      },
+      "?" => self.help = true,
+      "j" | "down" => self.vp.LineDown(1),
+      "k" | "up" => self.vp.LineUp(1),
+      "ctrl+d" => self.vp.HalfPageDown(),
+      "ctrl+u" => self.vp.HalfPageUp(),
+      "ctrl+f" | "pgdown" | " " => self.vp.PageDown(),
+      "ctrl+b" | "pgup" => self.vp.PageUp(),
+      "g" | "home" => self.vp.GotoTop(),
+      "G" | "end" => self.vp.GotoBottom(),
+      "]" => self.jump_message(1, false),
+      "[" => self.jump_message(-1, false),
+      "n" => {
+        if self.search_active() {
+          self.jump_match(1, false)
+        } else {
+          self.jump_message(1, false)
+        }
+      },
+      "N" => {
+        if self.search_active() {
+          self.jump_match(-1, false)
+        } else {
+          self.jump_message(-1, false)
+        }
+      },
+      "}" => self.jump_message(1, true),
+      "{" => self.jump_message(-1, true),
+      "/" => {
+        self.search = ""
+        self.matches = []
+        self.search_editing = true
+      },
+      "esc" => {
+        if self.search_active() {
+          self.search = ""
+          self.matches = []
+        } else {
+          self.back_to_list()
+        }
+      },
+      "h" | "left" | "backspace" => self.back_to_list(),
+      "y" => self.copy_resume(self.current.id),
+      "F" => self.toggle_follow(),
+      "o" => self.open_continued(),
+      "r" => {
+        self.role = self.role.next()
+        self.status = f"역할 필터: {self.role.label()}"
+        self.relayout()
+      },
+      "t" => {
+        self.toggles.tools = !self.toggles.tools
+        self.status = on_off("도구 호출", self.toggles.tools)
+        self.relayout()
+      },
+      "T" => {
+        self.toggles.thinking = !self.toggles.thinking
+        self.status = on_off("thinking", self.toggles.thinking)
+        self.relayout()
+      },
+      "c" => {
+        self.toggles.code = !self.toggles.code
+        self.status = on_off("코드 변경", self.toggles.code)
+        self.relayout()
+      },
+      "e" => {
+        self.toggles.expand = !self.toggles.expand
+        self.status = on_off("접힌 블록 펼치기", self.toggles.expand)
+        self.relayout()
+      },
+      "D" => {
+        self.toggles.debug = !self.toggles.debug
+        self.status = on_off(
+          "디버그(메타, 알 수 없는 블록)",
+          self.toggles.debug,
+        )
+        self.relayout()
+      },
+      _ => (),
+    }
+    if self.screen == Screen.Conv {
+      self.ensure_rendered()
+      if self.vp.AtBottom() { self.new_count = 0 }
+    }
+    None
+  }
+
+  // ---------- 목록 ----------
+
+  pub fn list_height(self: Ref<Self>) -> int {
+    max(self.height - 3, 1)
+  }
+
+  pub fn reload_list(self: mut Ref<Self>) {
+    let keep = match self.selected() {
+      Some(s) => s.id,
+      None => "",
+    }
+    let dirs = session.project_dirs(self.opts.root, self.opts.cwd, self.scope)
+    self.sessions = session.list_sessions(dirs)
+    self.dirs = dirs
+    self.apply_filter()
+    self.select_id(keep)
+    self.notify_dirs()
+  }
+
+  fn toggle_scope(self: mut Ref<Self>) {
+    self.scope = match self.scope {
+      session.Scope.All => self.opts.scope,
+      _ => session.Scope.All,
+    }
+    if self.scope == session.Scope.All && self.opts.scope == session.Scope.All {
+      self.scope = session.Scope.Cwd
+    }
+    self.reload_list()
+    self.status = f"범위: {scope_label(self.scope)}"
+  }
+
+  pub fn apply_filter(self: mut Ref<Self>) {
+    let q = strings.ToLower(strings.TrimSpace(self.filter))
+    let mut rows = Slice.new<int>()
+    for (i, s) in self.sessions.enumerate() {
+      if q == "" || matches_session(s, q) { rows = rows.append(i) }
+    }
+    self.rows = rows
+    self.clamp_list()
+  }
+
+  fn select_id(self: mut Ref<Self>, id: string) {
+    if id == "" { return }
+    for (i, r) in self.rows.enumerate() {
+      if self.sessions[r].id == id {
+        self.cursor = i
+        self.clamp_list()
+        return
+      }
+    }
+  }
+
+  fn clamp_list(self: mut Ref<Self>) {
+    let n = self.rows.length()
+    if self.cursor >= n { self.cursor = n - 1 }
+    if self.cursor < 0 { self.cursor = 0 }
+    let h = self.list_height()
+    if self.cursor < self.top { self.top = self.cursor }
+    if self.cursor >= self.top + h { self.top = self.cursor - h + 1 }
+    if self.top < 0 { self.top = 0 }
+  }
+
+  fn move_cursor(self: mut Ref<Self>, delta: int) {
+    self.cursor += delta
+    self.clamp_list()
+  }
+
+  pub fn selected(self: Ref<Self>) -> Option<model.Session> {
+    let r = self.rows.get(self.cursor)?
+    self.sessions.get(r)
+  }
+
+  fn copy_resume(self: mut Ref<Self>, id: string) {
+    if id == "" { return }
+    let cmd = f"claude --resume {id}"
+    self.status = match clipboard.WriteAll(cmd) {
+      Ok(_) => f"복사됨: {cmd}",
+      Err(_) => f"{cmd}  (클립보드 사용 불가)",
+    }
+  }
+
+  // ---------- 삭제 ----------
+
+  /// 삭제 확인 모달을 띄운다. 검증 실패는 상태줄에 표시하고 모달을 띄우지 않는다.
+  pub fn ask_delete(self: mut Ref<Self>, s: model.Session) {
+    let open_id = if self.has_conv { self.current.id } else { "" }
+    match session.plan_delete(
+      self.opts.root,
+      s.path,
+      self.opts.purge,
+      open_id,
+      self.trash_root,
+      time.Now(),
+    ) {
+      Ok(plan) => self.modal = Some(plan),
+      Err(e) => self.status = f"삭제 불가: {e}",
+    }
+  }
+
+  fn on_modal_key(self: mut Ref<Self>, plan: session.DeletePlan, k: string) {
+    self.modal = None
+    // 기본은 취소. 차단되지 않았고 y 를 눌렀을 때만 실행한다.
+    if k != "y" || plan.blocked.is_some() {
+      self.status = "삭제 취소"
+      return
+    }
+    match session.execute_delete(
+      self.opts.root,
+      plan,
+      self.trash_root,
+      time.Now(),
+    ) {
+      Ok(_) => {
+        self.status = if plan.purge {
+          f"영구 삭제됨: {plan.session_id}"
+        } else {
+          f"휴지통으로 이동: {plan.trash_dir}"
+        }
+      },
+      Err(e) => self.status = f"삭제 실패: {e}",
+    }
+    let cursor = self.cursor
+    self.reload_list()
+    self.cursor = cursor
+    self.clamp_list()
+  }
+
+  fn view_modal(self: Ref<Self>, plan: session.DeletePlan) -> string {
+    let mut lines = Slice.new<string>()
+    let title = self.sessions
+      .find(|s| s.id == plan.session_id)
+      .map_or(plan.session_id, |s| s.title)
+    let mode = if plan.purge {
+      st_error().Render("영구 삭제 (--purge, 되돌릴 수 없음)")
+    } else {
+      "휴지통으로 이동"
+    }
+    lines = lines.append(st_warn().Render("세션 삭제") + "  " + mode)
+    lines = lines.append(clip(title, 70))
+    lines = lines.append("")
+    lines = lines.append(f"대상 ({self.opts.root} 기준):")
+    for item in plan.items {
+      let rel = filepath.Rel(self.opts.root, item).unwrap_or(item)
+      let suffix = if item == plan.items[0] { "" } else { "  (부속)" }
+      lines = lines.append("  " + clip(rel, 90) + suffix)
+    }
+    if !plan.purge {
+      lines = lines.append("이동 위치:")
+      lines = lines.append("  " + clip(plan.trash_dir, 90))
+    }
+    if let Some(s) = self.sessions.find(|s| s.id == plan.session_id) {
+      if let Some(next) = s.continued_in {
+        lines = lines.append(st_warn().Render(
+          f"주의: 이 세션은 {next} 로 이어졌습니다",
+        ))
+      }
+    }
+    lines = lines.append("")
+    match plan.blocked {
+      Some(reason) => {
+        lines = lines.append(st_error().Render("삭제할 수 없습니다: " + reason))
+        lines = lines.append(st_faint().Render("아무 키나 눌러 닫기"))
+      },
+      None => lines = lines.append(
+        "정말 삭제할까요? " + st_warn().Render("y") +
+        " 삭제 / 그 외 키 취소 (기본: 취소)",
+      ),
+    }
+    let box = st_modal().Render(lines.join("\n"))
+    lipgloss.Place(
+      self.width,
+      self.height,
+      lipgloss.Center,
+      lipgloss.Center,
+      box,
+    )
+  }
+
+  // ---------- 대화 ----------
+
+  fn open_path(self: mut Ref<Self>, path: string) {
+    match session.load_meta(path) {
+      Ok(s) => self.open_session(s),
+      Err(e) => self.status = f"열기 실패: {e}",
+    }
+  }
+
+  pub fn open_session(self: mut Ref<Self>, s: model.Session) {
+    self.conv = session.new_conversation(false)
+    self.tail = session.new_tail(s.path)
+    if let Err(e) = session.feed(&self.conv, &self.tail) {
+      self.status = f"읽기 실패: {e}"
+      return
+    }
+    self.current = s
+    self.has_conv = true
+    self.screen = Screen.Conv
+    self.status = ""
+    self.cache = Map.new<string, string>()
+    self.search = ""
+    self.search_editing = false
+    self.matches = []
+    self.spans = []
+    self.new_count = 0
+    self.announced_next = self.conv.continued_in.unwrap_or("")
+    self.follow = self.opts.watch
+    self.vp.SetContent("")
+    self.vp.GotoTop()
+    self.relayout_with(self.starts_at_bottom(s))
+    self.notify_dirs()
+  }
+
+  fn back_to_list(self: mut Ref<Self>) {
+    self.screen = Screen.List
+    if self.sessions.length() == 0 { self.reload_list() }
+    self.select_id(self.current.id)
+  }
+
+  fn content_width(self: Ref<Self>) -> int {
+    max(self.width - 1, 20)
+  }
+
+  fn ensure_renderer(self: mut Ref<Self>, width: int) {
+    if self.opts.plain {
+      self.md = None
+      return
+    }
+    if self.md.is_some() && self.md_width == width { return }
+    self.cache = Map.new<string, string>()
+    let style = if self.opts.theme == "auto" {
+      glamour.WithAutoStyle()
+    } else {
+      glamour.WithStandardStyle(self.opts.theme)
+    }
+    self.md = match glamour.NewTermRenderer(
+      style,
+      glamour.WithWordWrap(max(width - 4, 10)),
+    ) {
+      Ok(r) => Some(r),
+      Err(_) => None,
+    }
+    self.md_width = width
+  }
+
+  /// 현재 화면 맨 위 줄이 속한 span 인덱스
+  pub fn span_at(self: Ref<Self>, line: int) -> int {
+    let mut idx = 0
+    for (i, s) in self.spans.enumerate() {
+      if s.start <= line { idx = i } else { break }
+    }
+    idx
+  }
+
+  /// 다음/이전 메시지(또는 프롬프트) 시작 줄로 이동
+  pub fn jump_message(self: mut Ref<Self>, dir: int, prompts_only: bool) {
+    let y = self.vp.YOffset()
+    if dir > 0 {
+      for s in self.spans {
+        if s.start > y && (!prompts_only || s.prompt) {
+          self.vp.SetYOffset(s.start)
+          return
+        }
+      }
+    } else {
+      let mut target = -1
+      for s in self.spans {
+        if s.start >= y { break }
+        if !prompts_only || s.prompt { target = s.start }
+      }
+      if target >= 0 { self.vp.SetYOffset(target) }
+    }
+  }
+
+  // ---------- 화면 ----------
+
+  fn view_list(self: Ref<Self>) -> string {
+    let mut lines = Slice.new<string>()
+    let total = self.sessions.length()
+    let shown = self.rows.length()
+    let count = if shown == total { f"{total}개" } else { f"{shown}/{total}개" }
+    lines = lines.append(
+      st_title().Render("cci") +
+      st_faint().Render(
+        f" · {scope_label(self.scope)} · {count} 세션 · {self.opts.cwd}",
+      ),
+    )
+    if self.filter_editing || self.filter != "" {
+      let cursor = if self.filter_editing { "▏" } else { "" }
+      lines = lines.append(f"/ {self.filter}{cursor}")
+    } else {
+      lines = lines.append(st_faint().Render("  수정 시각         메시지  제목"))
+    }
+    let h = self.list_height()
+    if shown == 0 { lines = lines.append(self.empty_hint()...) }
+    let all_mode = self.scope != session.Scope.Cwd
+    for i in self.top..min(self.top + h, shown) {
+      let s = self.sessions[self.rows[i]]
+      let when = fmt_time(s.updated, true)
+      let counts = f"{s.msg_count}/{s.prompt_count}"
+      let mut row = fmt.Sprintf(" %-16s  %6s  %s", when, counts, s.title)
+      if all_mode && s.cwd != "" { row = row + st_faint().Render("  " + s.cwd) }
+      row = clip(row, self.width - 1)
+      if i == self.cursor { row = st_selected().Render(row) }
+      lines = lines.append(row)
+    }
+    while lines.length() < h + 2 {
+      lines = lines.append("")
+    }
+    lines = lines.append(self.status_line(
+      "enter 열기 · / 필터 · d 삭제 · y resume 복사 · a 범위 · R 새로고침 · ? 도움말 · q 종료",
+    ))
+    lines.join("\n")
+  }
+
+  fn empty_hint(self: Ref<Self>) -> Slice<string> {
+    if self.filter != "" {
+      return [
+        "",
+        st_faint().Render("  필터와 일치하는 세션이 없습니다. esc 로 필터 해제"),
+      ]
+    }
+    match self.scope {
+      session.Scope.Cwd => [
+        "",
+        st_warn().Render("  현재 폴더에 해당하는 Claude Code 세션이 없습니다."),
+        st_faint().Render(
+          f"  찾은 위치: {self.opts.root}/{session.encode_path(self.opts.cwd)}",
+        ),
+        st_faint().Render(
+          "  a 키로 전체 프로젝트 보기, 또는 cci --all / --parent (worktree 에서 실행한 경우)",
+        ),
+      ],
+      _ => ["", st_warn().Render(f"  세션이 없습니다: {self.opts.root}")],
+    }
+  }
+
+  fn status_line(self: Ref<Self>, hint: string) -> string {
+    let text = if self.status != "" { self.status } else { hint }
+    st_status().Render(clip(" " + text, self.width - 1))
+  }
+
+  fn view_conv(self: Ref<Self>) -> string {
+    let mut out = Slice.new<string>()
+    if !self.opts.compact {
+      let flags = self.flag_text()
+      let head = st_title().Render(clip(
+        self.current.title,
+        max(self.width - 30, 10),
+      )) +
+      st_faint().Render(f"  {flags}")
+      out = out.append(head)
+    }
+    out = out.append(self.vp.View())
+    let pct = (self.vp.ScrollPercent() * 100.0) as int
+    let pos = if self.spans.length() > 0 {
+      let i = self.span_at(self.vp.YOffset())
+      f"{i + 1}/{self.spans.length()} 메시지 · {pct}%"
+    } else {
+      "0 메시지"
+    }
+    let search = self.search_status()
+    let live = self.live_text()
+    let pos = if live != "" { f"{live} · {pos}" } else { pos }
+    let hint = if search != "" {
+      f"{search} · n/N 매치 이동 · esc 해제 · {pos}"
+    } else {
+      f"{pos} · ]/[ 메시지 · {{/}} 프롬프트 · / 검색 · t/T/c 토글 · h 목록 · ? 도움말"
+    }
+    out = out.append(self.status_line(hint))
+    out.join("\n")
+  }
+
+  fn flag_text(self: Ref<Self>) -> string {
+    let t = self.toggles
+    let mut flags = Slice.new<string>()
+    flags = flags.append(f"role:{self.role.label()}")
+    if t.tools { flags = flags.append("tools") }
+    if t.thinking { flags = flags.append("thinking") }
+    if t.code { flags = flags.append("code") }
+    if t.expand { flags = flags.append("expand") }
+    if t.debug {
+      flags = flags.append(
+        f"debug(unknown {self.conv.unknown_total()}, broken {self.conv.broken})",
+      )
+    }
+    flags.join(" ")
+  }
+
+  fn view_help(self: Ref<Self>) -> string {
+    let text = "cci 키 바인딩
+
+공통   ? 도움말  q 종료  ctrl+c 강제 종료
+이동   j/k ↓/↑  ctrl+d/u 반 페이지  ctrl+f/b PgDn/PgUp 페이지  g/G Home/End
+목록   enter/l/→ 열기  / 필터(제목, 첫 프롬프트, cwd, 브랜치, 날짜)  esc 필터 해제
+       d 삭제(확인 모달)  y claude --resume 복사  a 전체/현재 범위 전환  R/ctrl+r 새로고침
+대화   h/←/esc 목록으로  ]/[ 다음/이전 메시지  }/{ 다음/이전 프롬프트
+       / 검색  n/N 다음/이전 매치(검색 중) 또는 메시지
+       r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  D 디버그
+       F follow 토글  o 이어진 세션 열기  y resume 복사
+
+아무 키나 누르면 닫힙니다."
+    st_box().Render(text)
+  }
+}
+
+fn on_off(name: string, on: bool) -> string {
+  if on { f"{name} 표시" } else { f"{name} 숨김" }
+}
+
+pub fn scope_label(scope: session.Scope) -> string {
+  match scope {
+    session.Scope.Cwd => "현재 폴더",
+    session.Scope.Parent => "상위/하위 포함",
+    session.Scope.All => "전체 프로젝트",
+  }
+}
+
+/// 목록 필터: 제목, 첫 프롬프트, cwd, gitBranch, 날짜, id 부분일치 (q 는 소문자)
+pub fn matches_session(s: model.Session, q: string) -> bool {
+  let hay = [
+      s.title,
+      s.first_prompt,
+      s.cwd,
+      s.git_branch,
+      fmt_time(s.updated, true),
+      fmt_time(s.started, true),
+      s.id,
+    ].join(
+    "\n",
+  )
+  strings.ToLower(hay).contains(q)
+}

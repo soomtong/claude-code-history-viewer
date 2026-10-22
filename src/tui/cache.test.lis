@@ -1,0 +1,85 @@
+import "go:github.com/soomtong/claude-code-viewer/shim"
+import "go:os"
+import "go:path/filepath"
+import "go:strings"
+import "go:time"
+
+import "session"
+
+/// n 턴짜리 합성 세션을 만든다 (user 프롬프트 + assistant 마크다운 + thinking)
+fn big_session(root: string, n: int) -> string {
+  let dir = filepath.Join(root, session.encode_path("/work/big"))
+  let _ = os.MkdirAll(dir, 0o755)
+  let mut lines = Slice.new<string>()
+  for i in 0..n {
+    lines = lines.append(
+      f"{{\"type\":\"user\",\"uuid\":\"u{i}\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/work/big\",\"message\":{{\"role\":\"user\",\"content\":\"question {i}\"}}}}",
+    )
+    lines = lines.append(
+      f"{{\"type\":\"assistant\",\"uuid\":\"t{i}\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{{\"id\":\"m{i}\",\"role\":\"assistant\",\"content\":[{{\"type\":\"thinking\",\"thinking\":\"think {i}\"}}]}}}}",
+    )
+    lines = lines.append(
+      f"{{\"type\":\"assistant\",\"uuid\":\"a{i}\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{{\"id\":\"m{i}\",\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"## Answer {i}\\n\\n- one\\n- two\"}}]}}}}",
+    )
+  }
+  let path = filepath.Join(dir, "12345678-1234-4234-8234-123456789012.jsonl")
+  let _ = os.WriteFile(path, (strings.Join(lines, "\n") + "\n").bytes(), 0o644)
+  let t = time.Now().Add(-time.Hour)
+  let _ = os.Chtimes(path, t, t)
+  path
+}
+
+fn md_opts(root: string) -> Options {
+  Options {
+    root,
+    cwd: "/work/big",
+    scope: session.Scope.Cwd,
+    theme: "dark",
+    ..,
+  }
+}
+
+#[test("glamour 는 보이는 범위 ± 1 화면만 렌더하고 캐시한다")]
+fn lazy_render() {
+  let root = os.MkdirTemp("", "cci-cache-").unwrap_or("/nonexistent")
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let _ = big_session(root, 200)
+  let mut app = new_app(md_opts(root))
+  let _ = app.Update(shim.WindowSize(80, 24))
+  let _ = app.Update(shim.Key("enter"))
+  assert app.spans.length() == 400
+  let first = app.md_renders
+  assert first > 0
+  assert first < 30
+  let _ = app.Update(shim.Key("G"))
+  let after_bottom = app.md_renders
+  assert after_bottom > first
+  assert after_bottom < 60
+  let last = app.spans[app.spans.length() - 1]
+  assert last.full
+  // 다시 맨 위로 가면 캐시를 쓰므로 렌더 횟수가 늘지 않는다
+  let _ = app.Update(shim.Key("g"))
+  assert app.md_renders == after_bottom
+}
+
+#[test("토글 후에도 화면 맨 위 메시지를 유지한다")]
+fn keeps_anchor() {
+  let root = os.MkdirTemp("", "cci-cache-").unwrap_or("/nonexistent")
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let _ = big_session(root, 50)
+  let mut app = new_app(md_opts(root))
+  let _ = app.Update(shim.WindowSize(80, 24))
+  let _ = app.Update(shim.Key("enter"))
+  for _ in 0..20 {
+    let _ = app.Update(shim.Key("]"))
+  }
+  let before = app.spans[app.span_at(app.vp.YOffset())].msg
+  app.toggles.thinking = true
+  app.relayout()
+  let after = app.spans[app.span_at(app.vp.YOffset())].msg
+  assert before == after
+}

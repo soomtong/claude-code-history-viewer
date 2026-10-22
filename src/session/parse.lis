@@ -1,0 +1,485 @@
+// jsonl 한 줄 단위 파서. 규칙은 docs/decisions/0002-data-model.md 참고.
+import "go:encoding/json"
+import "go:sort"
+import "go:strings"
+
+import "model"
+
+#[json]
+struct RawMessage {
+  id: Option<string>,
+  role: Option<string>,
+  content: json.RawMessage,
+}
+
+#[json]
+struct RawEvent {
+  #[json("type")]
+  kind: string,
+  uuid: Option<string>,
+  timestamp: Option<string>,
+  cwd: Option<string>,
+  #[json("gitBranch")]
+  git_branch: Option<string>,
+  #[json("isSidechain")]
+  is_sidechain: Option<bool>,
+  #[json("isMeta")]
+  is_meta: Option<bool>,
+  #[json("aiTitle")]
+  ai_title: Option<string>,
+  #[json("customTitle")]
+  custom_title: Option<string>,
+  #[json("continuedInSessionId")]
+  continued_in: Option<string>,
+  message: Option<RawMessage>,
+}
+
+#[json]
+struct RawBlock {
+  #[json("type")]
+  kind: string,
+  text: Option<string>,
+  thinking: Option<string>,
+  name: Option<string>,
+  input: Option<Map<string, Unknown>>,
+  content: json.RawMessage,
+  #[json("is_error")]
+  is_error: Option<bool>,
+}
+
+enum Content {
+  Plain(string),
+  Blocks(Slice<RawBlock>),
+  Empty,
+}
+
+fn parse_content(raw: json.RawMessage) -> Content {
+  if (raw as Slice<byte>).length() == 0 { return Content.Empty }
+  let mut s: string = ""
+  if let Ok(_) = json.Unmarshal(raw as Slice<byte>, &s) {
+    return Content.Plain(s)
+  }
+  let mut blocks: Slice<RawBlock> = []
+  if let Ok(_) = json.Unmarshal(raw as Slice<byte>, &blocks) {
+    return Content.Blocks(blocks)
+  }
+  Content.Empty
+}
+
+/// 대화 줄로 취급하지 않지만 알려진 type. 이 외의 type 은 unknown 으로 집계한다.
+fn known_type(kind: string) -> bool {
+  match kind {
+    "user" |
+    "assistant" |
+    "system" |
+    "attachment" |
+    "ai-title" |
+    "custom-title" |
+    "last-prompt" => true,
+    "mode" |
+    "permission-mode" |
+    "queue-operation" |
+    "file-history-snapshot" |
+    "file-history-delta" => true,
+    "api-request" |
+    "api-request-blob" |
+    "api-request-shape" |
+    "atis-latch" |
+    "cost-state" => true,
+    "pr-link" | "agent-name" | "continued-in" | "summary" => true,
+    _ => false,
+  }
+}
+
+const META_TAGS = "command-name command-message command-args command-contents local-command-stdout local-command-stderr local-command-caveat system-reminder task-notification user-prompt-submit-hook bash-input bash-stdout bash-stderr"
+
+/// 사용자 프롬프트가 아닌 메타 텍스트인지 판정한다.
+pub fn is_meta_text(text: string) -> bool {
+  let t = strings.TrimSpace(text)
+  if t.starts_with("[Request interrupted") { return true }
+  if !t.starts_with("<") { return false }
+  for tag in strings.Fields(META_TAGS) {
+    if t.starts_with(f"<{tag}>") || t.starts_with(f"<{tag} ") { return true }
+  }
+  false
+}
+
+/// 문자열을 한 줄로 접고 최대 n 룬으로 자른다.
+pub fn one_line(text: string, n: int) -> string {
+  let flat = strings.Join(strings.Fields(text), " ")
+  let runes = flat.runes()
+  if runes.length() <= n { return flat }
+  (runes[..n] as string) + "…"
+}
+
+fn str_of(input: Map<string, Unknown>, key: string) -> string {
+  let Some(v) = input.get(key) else {
+    return ""
+  }
+  assert_type<string>(v).unwrap_or("")
+}
+
+fn tool_summary(name: string, input: Map<string, Unknown>) -> string {
+  let preferred = match name {
+    "Bash" => "command",
+    "Read" | "Write" | "Edit" | "MultiEdit" => "file_path",
+    "NotebookEdit" => "notebook_path",
+    "Grep" | "Glob" => "pattern",
+    "WebFetch" => "url",
+    "WebSearch" => "query",
+    "Agent" | "Task" => "description",
+    "Skill" => "skill",
+    _ => "",
+  }
+  if preferred != "" {
+    let v = str_of(input, preferred)
+    if v != "" { return one_line(v, 100) }
+  }
+  let mut keys = Slice.new<string>()
+  for (k, _) in input {
+    keys = keys.append(k)
+  }
+  sort.Strings(keys)
+  for k in keys {
+    let v = str_of(input, k)
+    if v != "" { return one_line(f"{k}={v}", 100) }
+  }
+  ""
+}
+
+fn code_change(
+  name: string,
+  input: Map<string, Unknown>,
+) -> Option<model.CodeChange> {
+  match name {
+    "Write" => Some(
+      model.CodeChange {
+        tool: name,
+        file_path: str_of(input, "file_path"),
+        content: str_of(input, "content"),
+        edits: [],
+      },
+    ),
+    "NotebookEdit" => Some(
+      model.CodeChange {
+        tool: name,
+        file_path: str_of(input, "notebook_path"),
+        content: str_of(input, "new_source"),
+        edits: [],
+      },
+    ),
+    "Edit" => Some(
+      model.CodeChange {
+        tool: name,
+        file_path: str_of(input, "file_path"),
+        content: "",
+        edits: [
+          model.EditPair {
+            old_text: str_of(input, "old_string"),
+            new_text: str_of(input, "new_string"),
+          },
+        ],
+      },
+    ),
+    "MultiEdit" => {
+      let mut edits: Slice<model.EditPair> = []
+      if let Some(raw) = input.get("edits") {
+        if let Some(items) = assert_type<Slice<Unknown>>(raw) {
+          for item in items {
+            if let Some(m) = assert_type<Map<string, Unknown>>(item) {
+              edits = edits.append(
+                model.EditPair {
+                  old_text: str_of(m, "old_string"),
+                  new_text: str_of(m, "new_string"),
+                },
+              )
+            }
+          }
+        }
+      }
+      Some(
+        model.CodeChange {
+          tool: name,
+          file_path: str_of(input, "file_path"),
+          content: "",
+          edits,
+        },
+      )
+    },
+    _ => None,
+  }
+}
+
+fn tool_result_text(raw: json.RawMessage) -> string {
+  match parse_content(raw) {
+    Content.Plain(s) => s,
+    Content.Blocks(bs) => {
+      let mut parts: Slice<string> = []
+      for b in bs {
+        if let Some(t) = b.text { parts = parts.append(t) }
+      }
+      parts.join("\n")
+    },
+    Content.Empty => "",
+  }
+}
+
+/// 파싱 진행 상태와 결과. 증분 파싱 시 같은 값에 계속 add_line 한다.
+pub struct Conversation {
+  pub messages: mut Slice<model.Message>,
+  index: mut Map<string, int>,
+  assistant_ids: mut Map<string, bool>,
+  meta_only: bool, // true 면 메시지 블록을 만들지 않고 목록 메타만 집계한다
+  pub unknown_types: mut Map<string, int>,
+  pub unknown_blocks: mut Map<string, int>,
+  pub broken: int,
+  pub lines: int,
+  pub cwd: string,
+  pub git_branch: string,
+  pub ai_title: Option<string>,
+  pub custom_title: Option<string>,
+  pub first_prompt: string,
+  pub started: string,
+  pub updated: string,
+  pub prompt_count: int,
+  pub continued_in: Option<string>,
+}
+
+pub fn new_conversation(meta_only: bool) -> mut Conversation {
+  Conversation {
+    messages: [],
+    index: Map.new<string, int>(),
+    assistant_ids: Map.new<string, bool>(),
+    meta_only,
+    unknown_types: Map.new<string, int>(),
+    unknown_blocks: Map.new<string, int>(),
+    broken: 0,
+    lines: 0,
+    cwd: "",
+    git_branch: "",
+    ai_title: None,
+    custom_title: None,
+    first_prompt: "",
+    started: "",
+    updated: "",
+    prompt_count: 0,
+    continued_in: None,
+  }
+}
+
+impl Conversation {
+  /// 병합 후 메시지 수 (사용자 프롬프트 + assistant 메시지)
+  pub fn msg_count(self: Ref<Self>) -> int {
+    self.prompt_count + self.assistant_ids.length()
+  }
+
+  /// custom > ai > 첫 프롬프트 순서로 제목을 고른다.
+  pub fn title(self: Ref<Self>) -> string {
+    if let Some(t) = self.custom_title {
+      if strings.TrimSpace(t) != "" { return one_line(t, 80) }
+    }
+    if let Some(t) = self.ai_title {
+      if strings.TrimSpace(t) != "" { return one_line(t, 80) }
+    }
+    if self.first_prompt != "" { return one_line(self.first_prompt, 80) }
+    "(제목 없음)"
+  }
+
+  /// 알 수 없는 type/블록의 총 개수 (디버그 표시용)
+  pub fn unknown_total(self: Ref<Self>) -> int {
+    let mut n = 0
+    for (_, v) in self.unknown_types {
+      n += v
+    }
+    for (_, v) in self.unknown_blocks {
+      n += v
+    }
+    n
+  }
+
+  fn count_block(self: mut Ref<Self>, kind: string) {
+    self.unknown_blocks[kind] = self.unknown_blocks[kind] + 1
+  }
+
+  pub fn add_line(self: mut Ref<Self>, line: string) {
+    let trimmed = strings.TrimSpace(line)
+    if trimmed == "" { return }
+    self.lines += 1
+    let mut ev = RawEvent { .. }
+    if let Err(_) = json.Unmarshal(trimmed as Slice<byte>, &ev) {
+      self.broken += 1
+      return
+    }
+    match ev.kind {
+      "ai-title" => {
+        if let Some(t) = ev.ai_title { self.ai_title = Some(t) }
+        return
+      },
+      "custom-title" => {
+        if let Some(t) = ev.custom_title { self.custom_title = Some(t) }
+        return
+      },
+      "continued-in" => {
+        if let Some(id) = ev.continued_in { self.continued_in = Some(id) }
+        return
+      },
+      "user" | "assistant" => (),
+      other => {
+        if !known_type(other) {
+          self.unknown_types[other] = self.unknown_types[other] + 1
+        }
+        return
+      },
+    }
+    if ev.is_sidechain.unwrap_or(false) { return }
+    let Some(msg) = ev.message else {
+      return
+    }
+    let ts = ev.timestamp.unwrap_or("")
+    if ts != "" {
+      if self.started == "" { self.started = ts }
+      self.updated = ts
+    }
+    if self.cwd == "" && ev.kind == "user" { self.cwd = ev.cwd.unwrap_or("") }
+    if let Some(b) = ev.git_branch { if b != "" { self.git_branch = b } }
+    let uuid = ev.uuid.unwrap_or("")
+    if ev.kind == "user" {
+      self.add_user(uuid, ts, ev.is_meta.unwrap_or(false), msg.content)
+    } else {
+      let id = msg.id.unwrap_or(uuid)
+      self.add_assistant(id, ts, msg.content)
+    }
+  }
+
+  fn add_user(
+    self: mut Ref<Self>,
+    uuid: string,
+    ts: string,
+    is_meta: bool,
+    raw: json.RawMessage,
+  ) {
+    let mut blocks: Slice<model.Block> = []
+    let mut prompt_text = ""
+    match parse_content(raw) {
+      Content.Plain(s) => {
+        if is_meta || is_meta_text(s) {
+          blocks = blocks.append(model.Block.Meta(s))
+        } else {
+          blocks = blocks.append(model.Block.Text(s))
+          prompt_text = s
+        }
+      },
+      Content.Blocks(bs) => {
+        for b in bs {
+          match b.kind {
+            "text" => {
+              let t = b.text.unwrap_or("")
+              if is_meta || is_meta_text(t) {
+                blocks = blocks.append(model.Block.Meta(t))
+              } else {
+                blocks = blocks.append(model.Block.Text(t))
+                if prompt_text == "" { prompt_text = t }
+              }
+            },
+            "tool_result" => {
+              blocks = blocks.append(
+                model.Block.ToolResult {
+                  text: tool_result_text(b.content),
+                  is_error: b.is_error.unwrap_or(false),
+                },
+              )
+            },
+            "image" => blocks = blocks.append(model.Block.Image),
+            other => {
+              self.count_block(other)
+              blocks = blocks.append(model.Block.Unknown(other))
+            },
+          }
+        }
+      },
+      Content.Empty => {
+        return
+      },
+    }
+    let is_prompt = prompt_text != ""
+    if is_prompt {
+      self.prompt_count += 1
+      if self.first_prompt == "" {
+        self.first_prompt = strings.TrimSpace(prompt_text)
+      }
+    }
+    if self.meta_only { return }
+    self.messages = self.messages.append(
+      model.Message {
+        id: uuid,
+        role: model.Role.User,
+        time: ts,
+        is_prompt,
+        blocks,
+      },
+    )
+  }
+
+  fn add_assistant(
+    self: mut Ref<Self>,
+    id: string,
+    ts: string,
+    raw: json.RawMessage,
+  ) {
+    self.assistant_ids[id] = true
+    let mut blocks: Slice<model.Block> = []
+    match parse_content(raw) {
+      Content.Plain(s) => blocks = blocks.append(model.Block.Text(s)),
+      Content.Blocks(bs) => {
+        for b in bs {
+          match b.kind {
+            "text" => blocks = blocks.append(model.Block.Text(b.text.unwrap_or(
+              "",
+            ))),
+            "thinking" => blocks = blocks.append(model.Block.Thinking(
+              b.thinking.unwrap_or(""),
+            )),
+            "redacted_thinking" => blocks = blocks.append(model.Block.Thinking(
+              "(redacted)",
+            )),
+            "tool_use" => {
+              let name = b.name.unwrap_or("")
+              let input = b.input.unwrap_or(Map.new<string, Unknown>())
+              blocks = blocks.append(
+                model.Block.ToolUse {
+                  name,
+                  summary: tool_summary(name, input),
+                  code: code_change(name, input),
+                },
+              )
+            },
+            other => {
+              self.count_block(other)
+              blocks = blocks.append(model.Block.Unknown(other))
+            },
+          }
+        }
+      },
+      Content.Empty => (),
+    }
+    if self.meta_only { return }
+    match self.index.get(id) {
+      Some(i) => {
+        let merged = self.messages[i].blocks.append(blocks...)
+        self.messages[i].blocks = merged
+      },
+      None => {
+        self.index[id] = self.messages.length()
+        self.messages = self.messages.append(
+          model.Message {
+            id,
+            role: model.Role.Assistant,
+            time: ts,
+            is_prompt: false,
+            blocks,
+          },
+        )
+      },
+    }
+  }
+}

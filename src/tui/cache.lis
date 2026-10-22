@@ -1,0 +1,163 @@
+// 메시지 단위 렌더 캐시와 지연 렌더 (Phase 2.5, docs/decisions/0006).
+// glamour 는 보이는 범위 ± 1 화면에 걸친 메시지에만 적용하고, 나머지는 평문 자리표시로 둔다.
+import "model"
+
+/// 캐시 키: 메시지 위치/id/블록 수(증분 병합 시 변함) + 폭 + 토글 + compact
+fn cache_key(
+  i: int,
+  m: model.Message,
+  width: int,
+  t: Toggles,
+  compact: bool,
+) -> string {
+  f"{i}|{m.id}|{m.blocks.length()}|{width}|{t.sig()}|{compact}"
+}
+
+/// glamour 렌더가 필요한 메시지인지 (assistant 텍스트만 마크다운으로 렌더)
+pub fn needs_markdown(m: model.Message) -> bool {
+  m.role == model.Role.Assistant && m.has_text()
+}
+
+/// 렌더된 조각들로 메시지-줄 매핑을 만든다. 메시지 사이에는 빈 줄 하나.
+fn layout_spans(
+  msgs: Slice<int>,
+  prompts: Slice<bool>,
+  pieces: Slice<string>,
+  full: Slice<bool>,
+) -> mut Slice<Span> {
+  let mut spans = Slice.new<Span>()
+  let mut line = 0
+  for (k, i) in msgs.enumerate() {
+    let n = line_count(pieces[k])
+    spans = spans.append(
+      Span { msg: i, start: line, lines: n, prompt: prompts[k], full: full[k] },
+    )
+    line += n + 1
+  }
+  spans
+}
+
+fn total_lines(spans: Slice<Span>) -> int {
+  match spans.get(spans.length() - 1) {
+    Some(last) => last.start + last.lines,
+    None => 0,
+  }
+}
+
+/// 다시 배치한 뒤 맨 위에 올 줄. anchor 메시지가 사라졌으면 그 뒤 첫 메시지.
+fn target_line(
+  spans: Slice<Span>,
+  anchor_msg: int,
+  delta: int,
+  to_bottom: bool,
+  height: int,
+  fallback: int,
+) -> int {
+  if to_bottom { return max(total_lines(spans) - height, 0) }
+  if anchor_msg < 0 { return fallback }
+  for s in spans {
+    if s.msg == anchor_msg { return s.start + min(delta, s.lines) }
+    if s.msg > anchor_msg { return s.start }
+  }
+  max(total_lines(spans) - height, 0)
+}
+
+impl App {
+  /// 메시지 i 의 렌더 조각과, glamour 까지 적용된 최종본인지 여부
+  fn piece(
+    self: mut Ref<Self>,
+    i: int,
+    m: model.Message,
+    width: int,
+    want_full: bool,
+  ) -> (string, bool) {
+    let compact = self.compact()
+    let key = cache_key(i, m, width, self.toggles, compact)
+    if let Some(r) = self.cache.get(key) { return (r, true) }
+    if !needs_markdown(m) || self.md.is_none() || want_full {
+      let r = render_message(m, width, self.toggles, compact, self.md)
+      self.cache[key] = r
+      if needs_markdown(m) && self.md.is_some() { self.md_renders += 1 }
+      return (r, true)
+    }
+    let pkey = "p|" + key
+    if let Some(r) = self.cache.get(pkey) { return (r, false) }
+    let r = render_message(m, width, self.toggles, compact, None)
+    self.cache[pkey] = r
+    (r, false)
+  }
+
+  /// 보이는 메시지를 배치해 viewport 내용과 spans 를 다시 만든다. 화면 맨 위 메시지는 유지한다.
+  pub fn relayout_with(self: mut Ref<Self>, to_bottom: bool) {
+    let width = self.content_width()
+    self.ensure_renderer(width)
+    let h = self.vp_height()
+    let y = self.vp.YOffset()
+    let mut anchor_msg = -1
+    let mut delta = 0
+    if let Some(s) = self.spans.get(self.span_at(y)) {
+      anchor_msg = s.msg
+      delta = y - s.start
+    }
+    let mut msgs = Slice.new<int>()
+    let mut prompts = Slice.new<bool>()
+    let mut pieces = Slice.new<string>()
+    let mut full = Slice.new<bool>()
+    let messages = self.conv.messages
+    for (i, m) in messages.enumerate() {
+      if !is_visible(m, self.toggles, self.role) { continue }
+      let (r, f) = self.piece(i, m, width, false)
+      msgs = msgs.append(i)
+      prompts = prompts.append(m.is_prompt)
+      pieces = pieces.append(r)
+      full = full.append(f)
+    }
+    let mut spans = layout_spans(msgs, prompts, pieces, full)
+    let mut target = target_line(spans, anchor_msg, delta, to_bottom, h, y)
+    // 보이는 범위 ± 1 화면에 걸친 자리표시만 glamour 로 렌더
+    let lo = target - h
+    let hi = target + 2 * h
+    let mut changed = false
+    for (k, s) in spans.enumerate() {
+      if s.full || s.start + s.lines < lo || s.start > hi { continue }
+      let (r, _) = self.piece(s.msg, messages[s.msg], width, true)
+      pieces[k] = r
+      full[k] = true
+      changed = true
+    }
+    if changed {
+      spans = layout_spans(msgs, prompts, pieces, full)
+      target = target_line(spans, anchor_msg, delta, to_bottom, h, y)
+    }
+    self.spans = spans
+    if pieces.is_empty() {
+      self.content = ""
+      self.plain_lines = []
+      self.matches = []
+      self.vp.SetContent(st_faint().Render(
+        "(표시할 메시지가 없습니다. r/t/T/c 로 필터와 토글을 바꿔 보세요)",
+      ))
+      self.vp.GotoTop()
+      return
+    }
+    self.content = pieces.join("\n\n")
+    self.plain_lines = []
+    self.vp.SetContent(self.content)
+    self.vp.SetYOffset(target)
+    if self.search_active() { self.update_matches() }
+  }
+
+  pub fn relayout(self: mut Ref<Self>) {
+    self.relayout_with(false)
+  }
+
+  /// 스크롤 후 보이는 범위 ± 1 화면에 자리표시가 있으면 다시 배치한다.
+  pub fn ensure_rendered(self: mut Ref<Self>) {
+    let y = self.vp.YOffset()
+    let h = self.vp_height()
+    let pending = self.spans.any(
+      |s| !s.full && s.start + s.lines >= y - h && s.start <= y + 2 * h,
+    )
+    if pending { self.relayout() }
+  }
+}

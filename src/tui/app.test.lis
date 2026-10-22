@@ -1,0 +1,209 @@
+import "go:github.com/charmbracelet/bubbletea"
+import "go:github.com/soomtong/claude-code-viewer/shim"
+import "go:os"
+import "go:path/filepath"
+import "go:time"
+
+import "session"
+
+const SID_A = "11111111-2222-4333-8444-555555555555"
+
+const SID_B = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+
+fn fixture(name: string) -> string {
+  let mut dir = os.Getwd().unwrap_or(".")
+  for _ in 0..6 {
+    let p = filepath.Join(dir, "fixtures", name)
+    if let Ok(_) = os.Stat(p) { return p }
+    dir = filepath.Dir(dir)
+  }
+  name
+}
+
+fn put(src: string, dst: string, age: time.Duration) {
+  let data = os.ReadFile(fixture(src)).unwrap_or([])
+  let _ = os.MkdirAll(filepath.Dir(dst), 0o755)
+  let _ = os.WriteFile(dst, data, 0o644)
+  let t = time.Now().Add(-age)
+  let _ = os.Chtimes(dst, t, t)
+}
+
+/// 임시 projects 루트: /work/demo-app 에 세션 2개, /work/other 에 1개
+fn make_root() -> string {
+  let root = os.MkdirTemp("", "cci-tui-").unwrap_or("/nonexistent")
+  let demo = filepath.Join(root, session.encode_path("/work/demo-app"))
+  put("basic.jsonl", filepath.Join(demo, SID_A + ".jsonl"), time.Hour)
+  put("untitled.jsonl", filepath.Join(demo, SID_B + ".jsonl"), 2 * time.Hour)
+  put(
+    "untitled.jsonl",
+    filepath.Join(
+      root,
+      session.encode_path("/work/other"),
+      "cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee.jsonl",
+    ),
+    time.Minute,
+  )
+  root
+}
+
+fn opts(root: string) -> Options {
+  Options {
+    root,
+    cwd: "/work/demo-app",
+    scope: session.Scope.Cwd,
+    theme: "dark",
+    plain: true,
+    ..,
+  }
+}
+
+fn press(app: mut Ref<App>, keys: Slice<string>) {
+  for k in keys {
+    let _ = app.Update(shim.Key(k))
+  }
+}
+
+#[test("목록: 현재 폴더 세션만, 최신순, 필터")]
+fn list_and_filter() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  assert app.sessions.length() == 2
+  let Some(first) = app.selected() else {
+    assert false
+    return
+  }
+  assert first.id == SID_A
+  press(&app, ["/", "p", "i", "p", "e", "enter"])
+  assert app.rows.length() == 1
+  let Some(sel) = app.selected() else {
+    assert false
+    return
+  }
+  assert sel.id == SID_B
+  press(&app, ["esc"])
+  assert app.rows.length() == 2
+  press(&app, ["a"])
+  assert app.sessions.length() == 3
+  assert app.View().contains("전체 프로젝트")
+}
+
+#[test("대화: 열기, 메시지 점프, 뒤로")]
+fn open_and_navigate() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(80, 4))
+  press(&app, ["enter"])
+  assert app.screen == Screen.Conv
+  // 기본 토글: 프롬프트 2 + 텍스트 있는 assistant 2
+  assert app.spans.length() == 4
+  assert app.View().contains("Add a greet function")
+  press(&app, ["]"])
+  assert app.vp.YOffset() == app.spans[1].start
+  press(&app, ["}"])
+  assert app.vp.YOffset() == app.spans[3].start
+  press(&app, ["{"])
+  assert app.vp.YOffset() == app.spans[0].start
+  press(&app, ["h"])
+  assert app.screen == Screen.List
+  let Some(sel) = app.selected() else {
+    assert false
+    return
+  }
+  assert sel.id == SID_A
+}
+
+#[test("빈 범위 안내")]
+fn empty_scope_hint() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut o = opts(root)
+  o.cwd = "/work/nowhere"
+  let mut app = new_app(o)
+  assert app.sessions.length() == 0
+  assert app.View().contains("--parent")
+}
+
+#[test("q 로 종료")]
+fn quits() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let (_, cmd) = app.Update(shim.Key("q"))
+  assert app.quitting
+  assert cmd.is_some()
+}
+
+#[test("헤드리스 program: Send 로 키 주입")]
+fn headless_program() -> Result<(), error> {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let r = os.Open(os.DevNull)?
+  let mut program = tea.NewProgram(
+    &app,
+    tea.WithInput(r),
+    tea.WithoutRenderer(),
+  )
+  task {
+    time.Sleep(30 * time.Millisecond)
+    program.Send(shim.WindowSize(80, 20))
+    program.Send(shim.Key("enter"))
+    program.Send(shim.Key("G"))
+    program.Send(shim.Key("q"))
+  }
+  let _ = program.Run()?
+  assert app.screen == Screen.Conv
+  assert app.quitting
+  Ok(())
+}
+
+#[test("삭제 모달: 기본 취소, y 로 휴지통 이동, 열람 중 차단")]
+fn delete_modal() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let old_home = os.Getenv("HOME")
+  let _ = os.Setenv("HOME", root)
+  defer {
+    let _ = os.Setenv("HOME", old_home)
+  }
+  let real_root = filepath.EvalSymlinks(root).unwrap_or(root)
+  let mut app = new_app(opts(real_root))
+  let _ = app.Update(shim.WindowSize(120, 30))
+  let Some(target) = app.selected() else {
+    assert false
+    return
+  }
+  press(&app, ["d"])
+  assert app.modal.is_some()
+  assert app.View().contains("정말 삭제할까요?")
+  press(&app, ["enter"])
+  assert app.modal.is_none()
+  assert os.Stat(target.path).is_ok()
+  press(&app, ["d", "n"])
+  assert os.Stat(target.path).is_ok()
+  // 열람 중이면 차단
+  press(&app, ["enter", "h", "d"])
+  assert app.View().contains("현재 열람 중")
+  press(&app, ["y"])
+  assert os.Stat(target.path).is_ok()
+  // R 로 열람 해제 후 삭제
+  press(&app, ["R", "d", "y"])
+  assert os.Stat(target.path).is_err()
+  assert app.sessions.length() == 1
+  assert app.status.contains(".Trash")
+}

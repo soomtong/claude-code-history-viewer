@@ -1,0 +1,241 @@
+// 경로 탐색과 세션 목록 메타 수집.
+import "go:bufio"
+import "go:cmp"
+import "go:os"
+import "go:path/filepath"
+import "go:regexp"
+import "go:slices"
+import "go:strings"
+
+import "model"
+
+/// 세션 목록 범위
+pub enum Scope {
+  /// 현재 cwd 와 정확히 일치하는 프로젝트
+  #[default]
+  Cwd,
+  /// cwd 의 상위/하위로 보이는 프로젝트까지 (worktree 대비)
+  Parent,
+  /// 전체 프로젝트
+  All,
+}
+
+/// `~/.claude` 위치. CLAUDE_CONFIG_DIR 이 있으면 우선한다.
+pub fn claude_dir() -> Result<string, error> {
+  let custom = os.Getenv("CLAUDE_CONFIG_DIR")
+  if custom != "" { return Ok(filepath.Clean(custom)) }
+  let home = os.UserHomeDir()?
+  Ok(filepath.Join(home, ".claude"))
+}
+
+pub fn projects_root() -> Result<string, error> {
+  let dir = claude_dir()?
+  Ok(filepath.Join(dir, "projects"))
+}
+
+/// Claude Code 의 프로젝트 디렉터리 이름 규칙: 영숫자 외 문자는 모두 `-`.
+pub fn encode_path(path: string) -> string {
+  let mut out = Slice.new<rune>()
+  for r in path.runes() {
+    let alnum = (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+    (r >= '0' && r <= '9')
+    let c = if alnum { r } else { '-' }
+    out = out.append(c)
+  }
+  out as string
+}
+
+fn uuid_re() -> Ref<regexp.Regexp> {
+  regexp.MustCompile(
+    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+  )
+}
+
+pub fn is_uuid(s: string) -> bool {
+  uuid_re().MatchString(s)
+}
+
+/// 파일 이름이 `<uuid>.jsonl` 인지
+pub fn is_session_file(name: string) -> bool {
+  name.ends_with(".jsonl") && is_uuid(strings.TrimSuffix(name, ".jsonl"))
+}
+
+fn is_dir(path: string) -> bool {
+  os.Stat(path).map_or(false, |info| info.IsDir())
+}
+
+/// cwd 의 인코딩 후보. `$PWD` 기반 경로와 심볼릭 링크를 푼 실경로(macOS 의 /tmp -> /private/tmp 등)를 모두 본다.
+pub fn cwd_keys(cwd: string) -> Slice<string> {
+  let mut keys = [encode_path(cwd)]
+  if let Ok(real) = filepath.EvalSymlinks(cwd) {
+    let k = encode_path(real)
+    if !keys.contains(k) { keys = keys.append(k) }
+  }
+  keys
+}
+
+fn related(name: string, enc: string, home_enc: string) -> bool {
+  let ancestor = enc.starts_with(name + "-") && name != home_enc && name != "-"
+  name == enc || ancestor || name.starts_with(enc + "-")
+}
+
+/// 범위에 해당하는 프로젝트 디렉터리 목록
+pub fn project_dirs(root: string, cwd: string, scope: Scope) -> Slice<string> {
+  let keys = cwd_keys(cwd)
+  let mut out: Slice<string> = []
+  match scope {
+    Scope.Cwd => {
+      for k in keys {
+        let dir = filepath.Join(root, k)
+        if is_dir(dir) { out = out.append(dir) }
+      }
+    },
+    _ => {
+      let entries = match os.ReadDir(root) {
+        Partial.Ok(es) => es,
+        Partial.Both(es, _) => es,
+        Partial.Err(_) => return out,
+      }
+      let home_enc = os.UserHomeDir().map_or("", encode_path)
+      for e in entries {
+        if !e.IsDir() { continue }
+        let name = e.Name()
+        let take = match scope {
+          Scope.All => true,
+          _ => keys.any(|k| related(name, k, home_enc)),
+        }
+        if take { out = out.append(filepath.Join(root, name)) }
+      }
+    },
+  }
+  out
+}
+
+/// 디렉터리 안의 세션 파일 경로 (UUID 이름만)
+pub fn session_files(dir: string) -> Slice<string> {
+  let mut out: Slice<string> = []
+  let entries = match os.ReadDir(dir) {
+    Partial.Ok(es) => es,
+    Partial.Both(es, _) => es,
+    Partial.Err(_) => return out,
+  }
+  for e in entries {
+    if e.IsDir() { continue }
+    if is_session_file(e.Name()) {
+      out = out.append(filepath.Join(dir, e.Name()))
+    }
+  }
+  out
+}
+
+/// 전체 프로젝트에서 세션 id 로 파일을 찾는다.
+pub fn find_session(root: string, id: string) -> Option<string> {
+  let entries = match os.ReadDir(root) {
+    Partial.Ok(es) => es,
+    Partial.Both(es, _) => es,
+    Partial.Err(_) => return None,
+  }
+  for e in entries {
+    if !e.IsDir() { continue }
+    let p = filepath.Join(root, e.Name(), id + ".jsonl")
+    if let Ok(info) = os.Stat(p) { if !info.IsDir() { return Some(p) } }
+  }
+  None
+}
+
+pub fn session_id_of(path: string) -> string {
+  strings.TrimSuffix(filepath.Base(path), ".jsonl")
+}
+
+pub fn build_session(
+  path: string,
+  size: int64,
+  mtime: int64,
+  conv: Ref<Conversation>,
+) -> model.Session {
+  model.Session {
+    id: session_id_of(path),
+    path,
+    project: filepath.Base(filepath.Dir(path)),
+    cwd: conv.cwd,
+    git_branch: conv.git_branch,
+    title: conv.title(),
+    custom_title: conv.custom_title,
+    ai_title: conv.ai_title,
+    first_prompt: one_line(conv.first_prompt, 200),
+    started: conv.started,
+    updated: conv.updated,
+    msg_count: conv.msg_count(),
+    prompt_count: conv.prompt_count,
+    size,
+    mtime,
+    continued_in: conv.continued_in,
+  }
+}
+
+/// 세션 파일 하나의 목록 메타를 수집한다 (블록은 만들지 않음).
+pub fn load_meta(path: string) -> Result<model.Session, error> {
+  let info = os.Stat(path)?
+  let file = os.Open(path)?
+  defer file.Close()
+  let mut conv = new_conversation(true)
+  let mut scanner = bufio.NewScanner(file)
+  // 한 줄이 1MB 를 넘는 경우가 있어 상한을 64MB 로 둔다. 초과 시 그 지점까지의 메타만 쓴다.
+  scanner.Buffer(Slice.make<byte>(64 * 1024), 64 * 1024 * 1024)
+  while scanner.Scan() {
+    conv.add_line(scanner.Text())
+  }
+  Ok(build_session(path, info.Size(), info.ModTime().Unix(), &conv))
+}
+
+/// 여러 디렉터리의 세션 메타를 병렬로 모아 mtime 최신순으로 돌려준다.
+pub fn list_sessions(dirs: Slice<string>) -> mut Slice<model.Session> {
+  let mut paths: Slice<string> = []
+  for d in dirs {
+    paths = paths.append(session_files(d)...)
+  }
+  let n = paths.length()
+  let mut out = Slice.new<model.Session>()
+  if n == 0 { return out }
+  let jobs = Channel.buffered<string>(n)
+  let results = Channel.buffered<Option<model.Session>>(n)
+  for p in paths {
+    let _ = jobs.send(p)
+  }
+  jobs.close()
+  let workers = min(n, 8)
+  for _ in 0..workers {
+    task {
+      for p in jobs {
+        let _ = results.send(load_meta(p).ok())
+      }
+    }
+  }
+  for _ in 0..n {
+    if let Some(Some(s)) = results.receive() { out = out.append(s) }
+  }
+  sort_sessions(out)
+  out
+}
+
+pub fn sort_sessions(sessions: mut Slice<model.Session>) {
+  slices.SortStableFunc(sessions, |a, b| cmp.Compare(b.mtime, a.mtime))
+}
+
+pub struct FeedResult {
+  pub added: int,
+  pub reset: bool,
+}
+
+/// tail 에서 새 줄을 읽어 conv 에 반영한다. 파일이 줄어들었으면 conv 를 초기화한다.
+pub fn feed(
+  conv: mut Ref<Conversation>,
+  tail: mut Ref<Tail>,
+) -> Result<FeedResult, error> {
+  let read = tail.read_lines()?
+  if read.reset { conv.* = new_conversation(conv.meta_only) }
+  for line in read.lines {
+    conv.add_line(line)
+  }
+  Ok(FeedResult { added: read.lines.length(), reset: read.reset })
+}

@@ -1,0 +1,119 @@
+import "go:os"
+import "go:path/filepath"
+
+import "model"
+
+/// 저장소 루트의 fixtures/ 경로를 찾는다 (go test 의 cwd 는 target/<pkg>).
+fn fixture(name: string) -> string {
+  let mut dir = os.Getwd().unwrap_or(".")
+  for _ in 0..6 {
+    let p = filepath.Join(dir, "fixtures", name)
+    if let Ok(_) = os.Stat(p) { return p }
+    dir = filepath.Dir(dir)
+  }
+  name
+}
+
+fn load(name: string) -> Conversation {
+  let mut conv = new_conversation(false)
+  let mut tail = new_tail(fixture(name))
+  let _ = feed(&conv, &tail)
+  conv
+}
+
+#[test("같은 message.id 의 assistant 줄은 하나로 병합")]
+fn merges_assistant_lines() {
+  let conv = load("basic.jsonl")
+  let assistants = conv.messages.filter(|m| m.role == model.Role.Assistant)
+  assert assistants.length() == 3
+  let first = assistants[0]
+  assert first.id == "msg_A"
+  assert first.blocks.length() == 3
+  assert first.text() == "I will add **greet** now."
+  let second = assistants[1]
+  assert second.text() == "Done. The function now returns hello."
+}
+
+#[test("프롬프트/메시지 수 구분 집계, 메타/사이드체인/tool_result 제외")]
+fn counts_prompts() {
+  let conv = load("basic.jsonl")
+  assert conv.prompt_count == 2
+  assert conv.msg_count() == 5
+  let prompts = conv.messages.filter(|m| m.is_prompt)
+  assert prompts.length() == 2
+  assert prompts[0].text() == "Add a greet function to the demo app"
+  assert prompts[1].text() == "Now rename it using MultiEdit"
+  assert !conv.messages.any(|m| m.text().contains("sidechain"))
+  assert !conv.messages.any(|m| m.text().contains("must be ignored"))
+}
+
+#[test("제목 우선순위 custom > ai > 첫 프롬프트")]
+fn title_priority() {
+  let conv = load("basic.jsonl")
+  assert conv.title() == "My greet session"
+  let Some(ai) = conv.ai_title else {
+    assert false
+    return
+  }
+  assert ai == "Greet function in demo app"
+  let untitled = load("untitled.jsonl")
+  assert untitled.title() == "Explain the build pipeline in detail please"
+  assert untitled.cwd == "/work/other"
+}
+
+#[test("cwd 는 첫 user 줄, branch 는 마지막 값, continued-in 기록")]
+fn session_fields() {
+  let conv = load("basic.jsonl")
+  assert conv.cwd == "/work/demo-app"
+  assert conv.git_branch == "feature/x"
+  assert conv.started == "2026-01-02T03:04:05.000Z"
+  assert conv.updated == "2026-01-02T03:05:05.000Z"
+  let Some(next) = conv.continued_in else {
+    assert false
+    return
+  }
+  assert next == "99999999-8888-4777-8666-555555555555"
+}
+
+#[test("깨진 줄과 알 수 없는 블록 집계")]
+fn unknowns() {
+  let conv = load("basic.jsonl")
+  assert conv.broken == 1
+  assert conv.unknown_blocks["tool_addition"] == 1
+  assert conv.unknown_total() == 1
+}
+
+#[test("Write/Edit/MultiEdit 코드 변경 추출")]
+fn code_changes() {
+  let conv = load("basic.jsonl")
+  let mut changes: Slice<model.CodeChange> = []
+  for m in conv.messages {
+    changes = changes.append(m.code_changes()...)
+  }
+  assert changes.length() == 3
+  assert changes[0].tool == "Write"
+  assert changes[0].content.contains("func greet()")
+  assert changes[1].tool == "Edit"
+  assert changes[1].edits[0].new_text == "\"hello\""
+  assert changes[2].tool == "MultiEdit"
+  assert changes[2].edits.length() == 1
+}
+
+#[test("메타 텍스트 판정")]
+fn meta_text() {
+  assert is_meta_text("<command-name>/clear</command-name>")
+  assert is_meta_text("  <system-reminder>x</system-reminder>")
+  assert is_meta_text("[Request interrupted by user]")
+  assert !is_meta_text("<div> is html")
+  assert !is_meta_text("plain prompt")
+}
+
+#[test("meta_only 집계는 전체 파싱과 같은 메타를 낸다")]
+fn meta_only_matches() -> Result<(), error> {
+  let s = load_meta(fixture("basic.jsonl"))?
+  assert s.title == "My greet session"
+  assert s.msg_count == 5
+  assert s.prompt_count == 2
+  assert s.first_prompt == "Add a greet function to the demo app"
+  Ok(())
+}

@@ -1,0 +1,42 @@
+// 설정: ~/.config/cci/config.toml 과 환경변수 CCI_NO_WATCH (docs/decisions/0008).
+import "go:github.com/BurntSushi/toml"
+import "go:os"
+import "go:path/filepath"
+
+#[toml]
+pub struct Config {
+  pub watch: bool, // 모니터링 기본값 (기본 true)
+  pub theme: string, // glamour 테마: dark, light, notty, auto 등
+  pub purge: bool, // true 면 삭제가 휴지통 대신 영구 삭제
+  pub compact: bool,
+}
+
+pub fn defaults() -> Config {
+  Config { watch: true, theme: "dark", purge: false, compact: false }
+}
+
+pub fn config_path() -> string {
+  let home = os.UserHomeDir().unwrap_or("")
+  filepath.Join(home, ".config", "cci", "config.toml")
+}
+
+/// 파일이 없으면 기본값. 있는 키만 기본값을 덮어쓴다.
+pub fn load_from(path: string) -> Result<Config, error> {
+  let mut cfg = defaults()
+  if os.Stat(path).is_err() { return Ok(apply_env(cfg)) }
+  let _ = toml.DecodeFile(path, &cfg)?
+  Ok(apply_env(cfg))
+}
+
+pub fn load() -> Result<Config, error> {
+  load_from(config_path())
+}
+
+/// CCI_NO_WATCH 가 비어 있지 않고 "0"/"false" 가 아니면 모니터링을 끈다.
+pub fn apply_env(cfg: Config) -> Config {
+  let v = os.Getenv("CCI_NO_WATCH")
+  if v != "" && v != "0" && v != "false" {
+    return Config { watch: false, ..cfg }
+  }
+  cfg
+}

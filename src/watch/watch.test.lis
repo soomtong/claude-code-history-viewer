@@ -1,0 +1,85 @@
+import "go:os"
+import "go:path/filepath"
+import "go:time"
+
+fn wait_for(
+  ch: Channel<Slice<string>>,
+  want: string,
+  limit: time.Duration,
+) -> bool {
+  let deadline = time.After(limit)
+  loop {
+    let got = select {
+      match ch.receive() {
+        Some(paths) => paths.contains(want),
+        None => false,
+      },
+      match deadline.receive() {
+        Some(_) => return false,
+        None => return false,
+      },
+    }
+    if got { return true }
+  }
+}
+
+fn temp_dir() -> string {
+  let d = os.MkdirTemp("", "cci-watch-").unwrap_or("/nonexistent")
+  filepath.EvalSymlinks(d).unwrap_or(d)
+}
+
+#[test("fsnotify: 디렉터리 감시, jsonl 만 디바운스해서 전달")]
+fn fsnotify_events() {
+  let dir = temp_dir()
+  defer {
+    let _ = os.RemoveAll(dir)
+  }
+  let ch = Channel.buffered<Slice<string>>(16)
+  let h = start([dir], |paths| {
+    let _ = ch.send(paths)
+  })
+  assert h.mode == "fsnotify"
+  time.Sleep(50 * time.Millisecond)
+  let target = filepath.Join(dir, "a.jsonl")
+  let _ = os.WriteFile(filepath.Join(dir, "ignore.txt"), "x".bytes(), 0o644)
+  let _ = os.WriteFile(target, "{}\n".bytes(), 0o644)
+  assert wait_for(ch, target, 3 * time.Second)
+}
+
+#[test("add_dirs 로 나중에 추가한 디렉터리도 감시")]
+fn adds_dirs() {
+  let dir = temp_dir()
+  let other = temp_dir()
+  defer {
+    let _ = os.RemoveAll(dir)
+    let _ = os.RemoveAll(other)
+  }
+  let ch = Channel.buffered<Slice<string>>(16)
+  let h = start([dir], |paths| {
+    let _ = ch.send(paths)
+  })
+  h.add_dirs([other])
+  time.Sleep(100 * time.Millisecond)
+  let target = filepath.Join(other, "b.jsonl")
+  let _ = os.WriteFile(target, "{}\n".bytes(), 0o644)
+  assert wait_for(ch, target, 3 * time.Second)
+}
+
+#[test("폴링 fallback: 추가/변경/삭제 감지")]
+fn polling() {
+  let dir = temp_dir()
+  defer {
+    let _ = os.RemoveAll(dir)
+  }
+  let target = filepath.Join(dir, "c.jsonl")
+  let ch = Channel.buffered<Slice<string>>(16)
+  let h = start_polling([dir], |paths| {
+    let _ = ch.send(paths)
+  })
+  assert h.mode == "polling"
+  time.Sleep(50 * time.Millisecond)
+  let _ = os.WriteFile(target, "{}\n".bytes(), 0o644)
+  assert wait_for(ch, target, 3 * time.Second)
+  let _ = os.Remove(target)
+  assert wait_for(ch, target, 3 * time.Second)
+}

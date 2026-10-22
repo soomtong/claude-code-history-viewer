@@ -1,0 +1,94 @@
+import "go:os"
+import "go:path/filepath"
+import "go:strings"
+
+fn append_text(path: string, text: string) {
+  let Ok(f) = os.OpenFile(path, os.O_APPEND | os.O_CREATE | os.O_WRONLY, 0o644) else {
+    return
+  }
+  let _ = f.WriteString(text)
+  let _ = f.Close()
+}
+
+const U1 = "{\"type\":\"user\",\"uuid\":\"u1\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"message\":{\"role\":\"user\",\"content\":\"first\"}}"
+
+const U2 = "{\"type\":\"user\",\"uuid\":\"u2\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"second\"}}"
+
+#[test("개행 없는 꼬리는 보류, 완성되면 반영")]
+fn holds_partial_tail() {
+  let dir = os.MkdirTemp("", "cci-tail-").unwrap_or("/nonexistent")
+  defer {
+    let _ = os.RemoveAll(dir)
+  }
+  let path = filepath.Join(dir, "s.jsonl")
+  append_text(path, U1 + "\n" + U2.substring(0..10))
+  let mut conv = new_conversation(false)
+  let mut tail = new_tail(path)
+  let Ok(r1) = feed(&conv, &tail) else {
+    assert false
+    return
+  }
+  assert r1.added == 1
+  assert conv.messages.length() == 1
+  let Ok(r2) = feed(&conv, &tail) else {
+    assert false
+    return
+  }
+  assert r2.added == 0
+  append_text(path, U2.substring(10..U2.length()) + "\n")
+  let Ok(r3) = feed(&conv, &tail) else {
+    assert false
+    return
+  }
+  assert r3.added == 1
+  assert conv.messages.length() == 2
+  assert conv.messages[1].text() == "second"
+  assert conv.broken == 0
+}
+
+#[test("파일이 줄어들면 처음부터 다시 읽는다")]
+fn resets_on_truncate() {
+  let dir = os.MkdirTemp("", "cci-tail-").unwrap_or("/nonexistent")
+  defer {
+    let _ = os.RemoveAll(dir)
+  }
+  let path = filepath.Join(dir, "s.jsonl")
+  append_text(path, U1 + "\n" + U2 + "\n")
+  let mut conv = new_conversation(false)
+  let mut tail = new_tail(path)
+  let _ = feed(&conv, &tail)
+  assert conv.messages.length() == 2
+  let _ = os.WriteFile(path, (U2 + "\n").bytes(), 0o644)
+  let Ok(r) = feed(&conv, &tail) else {
+    assert false
+    return
+  }
+  assert r.reset
+  assert conv.messages.length() == 1
+  assert conv.messages[0].text() == "second"
+}
+
+#[test("1MB 를 넘는 줄도 읽는다")]
+fn reads_long_line() {
+  let dir = os.MkdirTemp("", "cci-tail-").unwrap_or("/nonexistent")
+  defer {
+    let _ = os.RemoveAll(dir)
+  }
+  let path = filepath.Join(dir, "s.jsonl")
+  let big = strings.Repeat("x", 2 * 1024 * 1024)
+  append_text(
+    path,
+    "{\"type\":\"user\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":\"" +
+    big +
+    "\"}}\n",
+  )
+  let mut conv = new_conversation(false)
+  let mut tail = new_tail(path)
+  let _ = feed(&conv, &tail)
+  assert conv.messages.length() == 1
+  let Ok(meta) = load_meta(path) else {
+    assert false
+    return
+  }
+  assert meta.prompt_count == 1
+}

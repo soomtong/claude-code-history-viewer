@@ -1,0 +1,27 @@
+import "go:os"
+import "go:path/filepath"
+
+#[test("파일 없으면 기본값, 있는 키만 덮어쓰기, CCI_NO_WATCH")]
+fn loads() -> Result<(), error> {
+  let dir = os.MkdirTemp("", "cci-config-")?
+  defer {
+    let _ = os.RemoveAll(dir)
+  }
+  let _ = os.Unsetenv("CCI_NO_WATCH")
+  let missing = load_from(filepath.Join(dir, "none.toml"))?
+  assert missing.watch
+  assert missing.theme == "dark"
+  let path = filepath.Join(dir, "config.toml")
+  os.WriteFile(path, "theme = \"light\"\npurge = true\n".bytes(), 0o644)?
+  let cfg = load_from(path)?
+  assert cfg.theme == "light"
+  assert cfg.purge
+  assert cfg.watch
+  let _ = os.Setenv("CCI_NO_WATCH", "1")
+  let off = load_from(path)?
+  let _ = os.Unsetenv("CCI_NO_WATCH")
+  assert !off.watch
+  os.WriteFile(path, "watch = \"oops\"\n".bytes(), 0o644)?
+  assert load_from(path).is_err()
+  Ok(())
+}

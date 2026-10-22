@@ -1,0 +1,215 @@
+// 세션 디렉터리 감시 (Phase 4, docs/decisions/0008).
+// 파일 단위가 아니라 부모 디렉터리를 감시하고 이벤트 이름으로 `.jsonl` 만 거른다.
+// 이벤트는 100ms 동안 조용하면(최대 500ms) 모아서 한 번에 콜백한다. fsnotify 를 쓸 수 없으면 500ms 폴링.
+//
+// select 작성 규칙: shorthand receive 암은 하나만 허용되므로 각 채널을 `match ch.receive() {..}` 암으로 쓴다.
+import "go:github.com/fsnotify/fsnotify"
+import "go:os"
+import "go:path/filepath"
+import "go:time"
+
+pub const DEBOUNCE_MS = 100
+
+pub const MAX_DELAY_MS = 500
+
+pub const POLL_MS = 500
+
+pub struct Handle {
+  pub mode: string, // "fsnotify" 또는 "polling"
+  dirs: Channel<Slice<string>>,
+}
+
+impl Handle {
+  /// 감시할 디렉터리를 추가한다 (이미 감시 중이면 무시). 막히지 않도록 버퍼가 차면 버린다.
+  pub fn add_dirs(self, dirs: Slice<string>) {
+    select {
+      self.dirs.send(dirs) => (),
+      _ => (),
+    }
+  }
+}
+
+enum Step {
+  Got(string),
+  Dirs(Slice<string>),
+  Flush,
+  Ignore,
+  Closed,
+}
+
+fn interesting(name: string) -> bool {
+  filepath.Ext(name) == ".jsonl"
+}
+
+fn ms(n: int) -> time.Duration {
+  (n as time.Duration) * time.Millisecond
+}
+
+/// 감시를 시작한다. fsnotify 가 실패하면 폴링으로 대신한다.
+pub fn start(dirs: Slice<string>, on_change: fn(Slice<string>)) -> Handle {
+  let ch = Channel.buffered<Slice<string>>(16)
+  match fsnotify.NewWatcher() {
+    Ok(w) => {
+      for d in dirs {
+        let _ = w.Add(d)
+      }
+      task run_fsnotify(w, ch, on_change)
+      Handle { mode: "fsnotify", dirs: ch }
+    },
+    Err(_) => start_polling(dirs, on_change),
+  }
+}
+
+fn run_fsnotify(
+  w: Ref<fsnotify.Watcher>,
+  dirs: Channel<Slice<string>>,
+  on_change: fn(Slice<string>),
+) {
+  let mut pending = Map.new<string, bool>()
+  let mut first = time.Now()
+  loop {
+    let wait = if pending.is_empty() {
+      time.After(time.Hour)
+    } else {
+      time.After(ms(DEBOUNCE_MS))
+    }
+    let step = select {
+      match w.Events.receive() {
+        Some(ev) => if interesting(ev.Name) {
+          Step.Got(ev.Name)
+        } else {
+          Step.Ignore
+        },
+        None => Step.Closed,
+      },
+      match w.Errors.receive() {
+        Some(_) => Step.Ignore,
+        None => Step.Closed,
+      },
+      match dirs.receive() {
+        Some(ds) => Step.Dirs(ds),
+        None => Step.Ignore,
+      },
+      match wait.receive() {
+        Some(_) => Step.Flush,
+        None => Step.Flush,
+      },
+    }
+    match step {
+      Step.Got(name) => {
+        if pending.is_empty() { first = time.Now() }
+        pending[name] = true
+        // 계속 쓰이는 중이어도 최대 지연을 넘기면 내보낸다
+        if time.Since(first) >= ms(MAX_DELAY_MS) {
+          on_change(keys(pending))
+          pending = Map.new<string, bool>()
+        }
+      },
+      Step.Dirs(ds) => {
+        for d in ds {
+          let _ = w.Add(d)
+        }
+      },
+      Step.Flush => {
+        if !pending.is_empty() {
+          on_change(keys(pending))
+          pending = Map.new<string, bool>()
+        }
+      },
+      Step.Ignore => (),
+      Step.Closed => break,
+    }
+  }
+}
+
+fn keys(m: Map<string, bool>) -> Slice<string> {
+  let mut out = Slice.new<string>()
+  for (k, _) in m {
+    out = out.append(k)
+  }
+  out
+}
+
+struct Stamp { size: int64, mtime: int64 }
+
+fn snapshot(dirs: Slice<string>) -> Map<string, Stamp> {
+  let mut out = Map.new<string, Stamp>()
+  for d in dirs {
+    let entries = match os.ReadDir(d) {
+      Partial.Ok(es) => es,
+      Partial.Both(es, _) => es,
+      Partial.Err(_) => continue,
+    }
+    for e in entries {
+      if e.IsDir() || !interesting(e.Name()) { continue }
+      if let Ok(info) = e.Info() {
+        out[filepath.Join(d, e.Name())] = Stamp {
+          size: info.Size(),
+          mtime: info.ModTime().UnixNano(),
+        }
+      }
+    }
+  }
+  out
+}
+
+/// 두 스냅샷 사이에 추가/변경/삭제된 경로
+fn diff_paths(
+  before: Map<string, Stamp>,
+  after: Map<string, Stamp>,
+) -> Slice<string> {
+  let mut out = Slice.new<string>()
+  for (p, s) in after {
+    match before.get(p) {
+      Some(old) => {
+        if old.size != s.size || old.mtime != s.mtime { out = out.append(p) }
+      },
+      None => out = out.append(p),
+    }
+  }
+  for (p, _) in before {
+    if after.get(p).is_none() { out = out.append(p) }
+  }
+  out
+}
+
+/// 폴링 감시 (fsnotify 실패 시 fallback)
+pub fn start_polling(
+  dirs: Slice<string>,
+  on_change: fn(Slice<string>),
+) -> Handle {
+  let ch = Channel.buffered<Slice<string>>(16)
+  task {
+    let mut watched = dirs.clone()
+    let mut last = snapshot(watched)
+    loop {
+      let tick = time.After(ms(POLL_MS))
+      let step = select {
+        match ch.receive() {
+          Some(ds) => Step.Dirs(ds),
+          None => Step.Closed,
+        },
+        match tick.receive() {
+          Some(_) => Step.Flush,
+          None => Step.Flush,
+        },
+      }
+      match step {
+        Step.Dirs(ds) => {
+          for d in ds {
+            if !watched.contains(d) { watched = watched.append(d) }
+          }
+          last = snapshot(watched)
+        },
+        Step.Closed => break,
+        _ => {
+          let now = snapshot(watched)
+          let changed = diff_paths(last, now)
+          last = now
+          if !changed.is_empty() { on_change(changed) }
+        },
+      }
+    }
+  }
+  Handle { mode: "polling", dirs: ch }
+}

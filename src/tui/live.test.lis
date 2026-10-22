@@ -1,0 +1,146 @@
+import "go:github.com/soomtong/claude-code-viewer/shim"
+import "go:os"
+import "go:path/filepath"
+import "go:time"
+
+import "session"
+
+fn append_line(path: string, line: string) {
+  let Ok(f) = os.OpenFile(path, os.O_APPEND | os.O_WRONLY, 0o644) else {
+    return
+  }
+  let _ = f.WriteString(line + "\n")
+  let _ = f.Close()
+}
+
+fn user_line(i: int) -> string {
+  f"{{\"type\":\"user\",\"uuid\":\"live{i}\",\"timestamp\":\"2026-01-03T00:00:00Z\",\"message\":{{\"role\":\"user\",\"content\":\"live prompt {i}\"}}}}"
+}
+
+fn live_opts(root: string) -> Options {
+  Options {
+    root,
+    cwd: "/work/demo-app",
+    scope: session.Scope.Cwd,
+    theme: "dark",
+    plain: true,
+    watch: true,
+    ..,
+  }
+}
+
+#[test("열린 세션에 줄이 추가되면 반영, 맨 아래면 follow")]
+fn follows_new_lines() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(live_opts(root))
+  let _ = app.Update(shim.WindowSize(80, 6))
+  press(&app, ["enter", "G"])
+  let path = app.current.path
+  let before = app.spans.length()
+  append_line(path, user_line(1))
+  let _ = app.Update(FilesChanged { paths: [path] })
+  assert app.spans.length() == before + 1
+  assert app.vp.AtBottom()
+  assert app.new_count == 0
+  // 위로 올라가 있으면 위치 유지 + 새 메시지 카운트
+  press(&app, ["g"])
+  append_line(path, user_line(2))
+  append_line(path, user_line(3))
+  let _ = app.Update(FilesChanged { paths: [path] })
+  assert app.vp.YOffset() == 0
+  assert app.new_count == 2
+  assert app.View().contains("새 메시지 2")
+  press(&app, ["G"])
+  assert app.new_count == 0
+}
+
+#[test("F 로 follow 끄면 맨 아래여도 따라가지 않는다")]
+fn follow_toggle() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(live_opts(root))
+  let _ = app.Update(shim.WindowSize(80, 6))
+  press(&app, ["enter", "G", "F"])
+  assert !app.follow
+  let y = app.vp.YOffset()
+  append_line(app.current.path, user_line(1))
+  let _ = app.Update(FilesChanged { paths: [app.current.path] })
+  assert app.vp.YOffset() == y
+  assert app.new_count == 1
+}
+
+#[test("목록: 새 세션 파일 생성과 삭제 반영")]
+fn list_updates() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(live_opts(root))
+  assert app.sessions.length() == 2
+  let dir = app.dirs[0]
+  let p = filepath.Join(dir, "dddddddd-bbbb-4ccc-8ddd-eeeeeeeeeeee.jsonl")
+  let _ = os.WriteFile(p, (user_line(9) + "\n").bytes(), 0o644)
+  let _ = app.Update(FilesChanged { paths: [p] })
+  assert app.sessions.length() == 3
+  // 선택은 기존 세션에 유지되고, 새 세션은 mtime 최신이라 맨 앞
+  assert app.sessions[0].title == "live prompt 9"
+  let _ = os.Remove(p)
+  let _ = app.Update(FilesChanged { paths: [p] })
+  assert app.sessions.length() == 2
+  // 감시 범위 밖이거나 세션 이름이 아니면 무시
+  let other = filepath.Join(dir, "notes.jsonl")
+  let _ = os.WriteFile(other, "{}\n".bytes(), 0o644)
+  let _ = app.Update(FilesChanged { paths: [other] })
+  assert app.sessions.length() == 2
+}
+
+#[test("continued-in 이 생기면 안내하고 o 로 연다")]
+fn continued_in() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(live_opts(root))
+  let _ = app.Update(shim.WindowSize(80, 20))
+  press(&app, ["j", "enter"])
+  assert app.current.id == SID_B
+  let next = "cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+  append_line(
+    app.current.path,
+    f"{{\"type\":\"continued-in\",\"sessionId\":\"{SID_B}\",\"continuedInSessionId\":\"{next}\"}}",
+  )
+  let _ = app.Update(FilesChanged { paths: [app.current.path] })
+  assert app.status.contains("o 로 열기")
+  press(&app, ["o"])
+  assert app.current.id == next
+}
+
+#[test("watch_hook 에 현재 감시 디렉터리를 알린다")]
+fn watch_hook() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(live_opts(root))
+  let seen = Channel.buffered<Slice<string>>(8)
+  app.set_watch_hook(|dirs| {
+    let _ = seen.send(dirs)
+  })
+  let Some(first) = seen.receive() else {
+    assert false
+    return
+  }
+  assert first.length() == 1
+  press(&app, ["a"])
+  let Some(all) = seen.receive() else {
+    assert false
+    return
+  }
+  assert all.length() == 2
+  let _ = time.Now()
+}

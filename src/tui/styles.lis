@@ -1,0 +1,69 @@
+import "go:github.com/charmbracelet/lipgloss"
+
+fn fg(c: string) -> lipgloss.Style {
+  lipgloss.NewStyle().Foreground(lipgloss.Color(c))
+}
+
+pub fn st_title() -> lipgloss.Style {
+  fg("212").Bold(true)
+}
+
+pub fn st_user() -> lipgloss.Style {
+  fg("39").Bold(true)
+}
+
+pub fn st_assistant() -> lipgloss.Style {
+  fg("208").Bold(true)
+}
+
+pub fn st_faint() -> lipgloss.Style {
+  lipgloss.NewStyle().Faint(true)
+}
+
+pub fn st_thinking() -> lipgloss.Style {
+  fg("245").Italic(true)
+}
+
+pub fn st_tool() -> lipgloss.Style {
+  fg("109")
+}
+
+pub fn st_add() -> lipgloss.Style {
+  fg("42")
+}
+
+pub fn st_del() -> lipgloss.Style {
+  fg("203")
+}
+
+pub fn st_warn() -> lipgloss.Style {
+  fg("214").Bold(true)
+}
+
+pub fn st_error() -> lipgloss.Style {
+  fg("196").Bold(true)
+}
+
+pub fn st_selected() -> lipgloss.Style {
+  lipgloss.NewStyle().Reverse(true)
+}
+
+pub fn st_status() -> lipgloss.Style {
+  fg("250").Background(lipgloss.Color("236"))
+}
+
+pub fn st_modal() -> lipgloss.Style {
+  lipgloss
+    .NewStyle()
+    .Border(lipgloss.RoundedBorder())
+    .BorderForeground(lipgloss.Color("203"))
+    .Padding(0, 1)
+}
+
+pub fn st_box() -> lipgloss.Style {
+  lipgloss
+    .NewStyle()
+    .Border(lipgloss.RoundedBorder())
+    .BorderForeground(lipgloss.Color("39"))
+    .Padding(0, 1)
+}

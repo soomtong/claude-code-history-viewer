@@ -1,0 +1,244 @@
+import "go:os"
+import "go:path/filepath"
+import "go:time"
+
+const DEL_ID = "22222222-3333-4444-8555-666666666666"
+
+const PROJ = "-work-demo-app"
+
+struct Tree { home: string, root: string, proj: string, jsonl: string }
+
+fn write(path: string, text: string) {
+  let _ = os.MkdirAll(filepath.Dir(path), 0o755)
+  let _ = os.WriteFile(path, text.bytes(), 0o644)
+}
+
+fn age(path: string, d: time.Duration) {
+  let t = time.Now().Add(-d)
+  let _ = os.Chtimes(path, t, t)
+}
+
+/// 임시 HOME 아래 합성 ~/.claude/projects 트리
+fn make_del_tree() -> Tree {
+  let home = os.MkdirTemp("", "cci-home-").unwrap_or("/nonexistent")
+  let real_home = filepath.EvalSymlinks(home).unwrap_or(home)
+  let root = filepath.Join(real_home, ".claude", "projects")
+  let proj = filepath.Join(root, PROJ)
+  let jsonl = filepath.Join(proj, DEL_ID + ".jsonl")
+  write(jsonl, "{}\n")
+  write(filepath.Join(proj, DEL_ID, "subagents", "agent-1.jsonl"), "{}\n")
+  write(filepath.Join(proj, DEL_ID + ".desktop-released.json"), "{}")
+  write(filepath.Join(proj, "memory", "MEMORY.md"), "keep")
+  write(filepath.Join(proj, ".session-aliases"), "keep")
+  write(
+    filepath.Join(proj, "33333333-3333-4444-8555-666666666666.jsonl"),
+    "{}\n",
+  )
+  age(jsonl, time.Hour)
+  Tree { home: real_home, root, proj, jsonl }
+}
+
+fn exists(path: string) -> bool {
+  os.Lstat(path).is_ok()
+}
+
+#[test("휴지통 이동: jsonl, <uuid>/, desktop-released.json 만 옮기고 나머지는 보존")]
+fn moves_to_trash() -> Result<(), error> {
+  let t = make_del_tree()
+  defer {
+    let _ = os.RemoveAll(t.home)
+  }
+  let old_home = os.Getenv("HOME")
+  let _ = os.Setenv("HOME", t.home)
+  defer {
+    let _ = os.Setenv("HOME", old_home)
+  }
+  let trash = default_trash_root()?
+  assert trash == filepath.Join(t.home, ".Trash", "cci")
+  let now = time.Now()
+  let plan = plan_delete(t.root, t.jsonl, false, "", trash, now)?
+  assert plan.items.length() == 3
+  assert plan.blocked.is_none()
+  let done = execute_delete(t.root, plan, trash, now)?
+  assert done.length() == 3
+  assert !exists(t.jsonl)
+  assert !exists(filepath.Join(t.proj, DEL_ID))
+  assert exists(filepath.Join(plan.trash_dir, DEL_ID + ".jsonl"))
+  assert exists(filepath.Join(
+    plan.trash_dir,
+    DEL_ID,
+    "subagents",
+    "agent-1.jsonl",
+  ))
+  assert plan.trash_dir.starts_with(trash)
+  assert plan.trash_dir.ends_with(PROJ)
+  assert exists(filepath.Join(t.proj, "memory", "MEMORY.md"))
+  assert exists(filepath.Join(t.proj, ".session-aliases"))
+  assert exists(filepath.Join(
+    t.proj,
+    "33333333-3333-4444-8555-666666666666.jsonl",
+  ))
+  Ok(())
+}
+
+#[test("--purge 는 영구 삭제")]
+fn purges() -> Result<(), error> {
+  let t = make_del_tree()
+  defer {
+    let _ = os.RemoveAll(t.home)
+  }
+  let trash = filepath.Join(t.home, ".Trash", "cci")
+  let plan = plan_delete(t.root, t.jsonl, true, "", trash, time.Now())?
+  let _ = execute_delete(t.root, plan, trash, time.Now())?
+  assert !exists(t.jsonl)
+  assert !exists(filepath.Join(t.proj, DEL_ID))
+  assert !exists(trash)
+  assert exists(filepath.Join(t.proj, "memory", "MEMORY.md"))
+  Ok(())
+}
+
+#[test("거부: 세션이 아닌 경로들")]
+fn rejects_non_sessions() {
+  let t = make_del_tree()
+  defer {
+    let _ = os.RemoveAll(t.home)
+  }
+  let trash = filepath.Join(t.home, ".Trash", "cci")
+  let now = time.Now()
+  let bad = [
+    filepath.Join(t.proj, "memory", "MEMORY.md"),
+    filepath.Join(t.proj, ".session-aliases"),
+    filepath.Join(t.proj, DEL_ID + ".desktop-released.json"),
+    filepath.Join(t.proj, DEL_ID),
+    filepath.Join(t.proj, "memory", DEL_ID + ".jsonl"),
+    filepath.Join(t.proj, DEL_ID, "subagents", "agent-1.jsonl"),
+    t.proj + "/../" + PROJ + "/" + DEL_ID + ".jsonl",
+    filepath.Join(t.home, DEL_ID + ".jsonl"),
+    PROJ + "/" + DEL_ID + ".jsonl",
+    filepath.Join(t.proj, "44444444-3333-4444-8555-666666666666.jsonl"),
+  ]
+  for p in bad {
+    assert plan_delete(t.root, p, false, "", trash, now).is_err()
+  }
+  assert exists(t.jsonl)
+}
+
+#[test("거부: 심볼릭 링크 (파일, 부속 디렉터리, 프로젝트 디렉터리)")]
+fn rejects_symlinks() {
+  let t = make_del_tree()
+  defer {
+    let _ = os.RemoveAll(t.home)
+  }
+  let trash = filepath.Join(t.home, ".Trash", "cci")
+  let now = time.Now()
+  // 파일 심링크
+  let outside = filepath.Join(t.home, "outside.jsonl")
+  write(outside, "{}\n")
+  let link = filepath.Join(t.proj, "55555555-3333-4444-8555-666666666666.jsonl")
+  let _ = os.Symlink(outside, link)
+  assert plan_delete(t.root, link, false, "", trash, now).is_err()
+  // 부속 디렉터리 심링크
+  let id2 = "66666666-3333-4444-8555-666666666666"
+  let j2 = filepath.Join(t.proj, id2 + ".jsonl")
+  write(j2, "{}\n")
+  age(j2, time.Hour)
+  let _ = os.MkdirAll(filepath.Join(t.home, "victim"), 0o755)
+  let _ = os.Symlink(
+    filepath.Join(t.home, "victim"),
+    filepath.Join(t.proj, id2),
+  )
+  assert plan_delete(t.root, j2, false, "", trash, now).is_err()
+  // 프로젝트 디렉터리 자체가 심링크
+  let ext = filepath.Join(t.home, "extproj")
+  let j3 = filepath.Join(ext, "77777777-3333-4444-8555-666666666666.jsonl")
+  write(j3, "{}\n")
+  age(j3, time.Hour)
+  let _ = os.Symlink(ext, filepath.Join(t.root, "-linked"))
+  assert plan_delete(
+    t.root,
+    filepath.Join(
+      t.root,
+      "-linked",
+      "77777777-3333-4444-8555-666666666666.jsonl",
+    ),
+    false,
+    "",
+    trash,
+    now,
+  ).is_err()
+  assert exists(outside)
+  assert exists(j3)
+  assert exists(filepath.Join(t.home, "victim"))
+}
+
+#[test("대문자 UUID 허용")]
+fn accepts_uppercase() -> Result<(), error> {
+  let t = make_del_tree()
+  defer {
+    let _ = os.RemoveAll(t.home)
+  }
+  let up = filepath.Join(t.proj, "ABCDEF12-3333-4444-8555-666666666666.jsonl")
+  write(up, "{}\n")
+  age(up, time.Hour)
+  let plan = plan_delete(
+    t.root,
+    up,
+    false,
+    "",
+    filepath.Join(t.home, ".Trash", "cci"),
+    time.Now(),
+  )?
+  assert plan.items.length() == 1
+  Ok(())
+}
+
+#[test("차단: 최근 수정, 열람 중")]
+fn blocks_active() -> Result<(), error> {
+  let t = make_del_tree()
+  defer {
+    let _ = os.RemoveAll(t.home)
+  }
+  let trash = filepath.Join(t.home, ".Trash", "cci")
+  let open = plan_delete(t.root, t.jsonl, false, DEL_ID, trash, time.Now())?
+  assert open.blocked.is_some()
+  assert execute_delete(t.root, open, trash, time.Now()).is_err()
+  age(t.jsonl, 5 * time.Second)
+  let recent = plan_delete(t.root, t.jsonl, false, "", trash, time.Now())?
+  assert recent.blocked.is_some()
+  assert execute_delete(t.root, recent, trash, time.Now()).is_err()
+  assert exists(t.jsonl)
+  Ok(())
+}
+
+#[test("권한 없음: 실패하고 원본 유지")]
+fn permission_denied() -> Result<(), error> {
+  let t = make_del_tree()
+  defer {
+    let _ = os.Chmod(t.proj, 0o755)
+    let _ = os.RemoveAll(t.home)
+  }
+  let trash = filepath.Join(t.home, ".Trash", "cci")
+  let plan = plan_delete(t.root, t.jsonl, false, "", trash, time.Now())?
+  let _ = os.Chmod(t.proj, 0o555)
+  assert execute_delete(t.root, plan, trash, time.Now()).is_err()
+  let _ = os.Chmod(t.proj, 0o755)
+  assert exists(t.jsonl)
+  Ok(())
+}
+
+#[test("없는 파일은 오류")]
+fn missing_file() {
+  let t = make_del_tree()
+  defer {
+    let _ = os.RemoveAll(t.home)
+  }
+  let p = filepath.Join(t.proj, "88888888-3333-4444-8555-666666666666.jsonl")
+  assert plan_delete(
+    t.root,
+    p,
+    false,
+    "",
+    filepath.Join(t.home, ".Trash", "cci"),
+    time.Now(),
+  ).is_err()
+}

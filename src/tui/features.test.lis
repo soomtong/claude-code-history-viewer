@@ -1,0 +1,126 @@
+import "go:github.com/charmbracelet/x/ansi"
+import "go:github.com/soomtong/claude-code-viewer/shim"
+import "go:os"
+
+fn open_basic(root: string) -> mut App {
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(120, 200))
+  press(&app, ["enter"])
+  app
+}
+
+fn screen(app: mut Ref<App>) -> string {
+  ansi.Strip(app.View())
+}
+
+#[test("역할 필터 r 순환: all -> user -> assistant -> all")]
+fn role_cycle() {
+  let root = make_root()
+  let mut app = open_basic(root)
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  assert app.spans.length() == 4
+  press(&app, ["r"])
+  assert app.role == RoleFilter.User
+  assert app.spans.length() == 2
+  assert app.spans.all(|s| s.prompt)
+  press(&app, ["r"])
+  assert app.spans.length() == 2
+  assert !screen(&app).contains("Add a greet function")
+  press(&app, ["r"])
+  assert app.spans.length() == 4
+}
+
+#[test("토글: t 도구, c 코드, T thinking, D 디버그")]
+fn toggles() {
+  let root = make_root()
+  let mut app = open_basic(root)
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  assert !screen(&app).contains("go test ./...")
+  press(&app, ["t"])
+  let s1 = screen(&app)
+  assert s1.contains("⚙ Bash go test ./...")
+  assert s1.contains("tool_result")
+  assert s1.contains("File created successfully")
+  press(&app, ["t", "c"])
+  let s2 = screen(&app)
+  assert s2.contains("── Edit /work/demo-app/greet.go")
+  assert s2.contains("+ \"hello\"")
+  assert s2.contains("── Write /work/demo-app/greet.go")
+  assert s2.contains("── MultiEdit")
+  assert !s2.contains("⚙ Bash")
+  press(&app, ["T"])
+  assert screen(&app).contains("Plan the greet function.")
+  press(&app, ["D"])
+  let s3 = screen(&app)
+  assert s3.contains("<command-name>/clear</command-name>")
+  assert s3.contains("[unknown block: tool_addition]")
+  assert s3.contains("unknown 1, broken 1")
+}
+
+#[test("긴 블록 접기와 펼치기")]
+fn folding() {
+  let lines = ["1", "2", "3", "4", "5"]
+  let folded = fold_lines(lines, 3, false)
+  assert folded.length() == 4
+  assert ansi.Strip(folded[3]).contains("2줄 더 있음")
+  assert fold_lines(lines, 3, true).length() == 5
+}
+
+#[test("검색: 매치 점프, n/N, 카운트, esc 해제")]
+fn search() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(80, 4))
+  press(&app, ["enter", "/", "h", "e", "l", "l", "o"])
+  assert app.search_editing
+  assert app.search == "hello"
+  assert app.matches.length() == 1
+  assert app.vp.YOffset() == app.matches[0]
+  press(&app, ["enter"])
+  assert !app.search_editing
+  assert screen(&app).contains("1/1")
+  press(&app, ["/", "g", "r", "e", "e", "t", "enter"])
+  assert app.matches.length() >= 2
+  let first = app.vp.YOffset()
+  press(&app, ["n"])
+  assert app.vp.YOffset() > first
+  press(&app, ["N"])
+  assert app.vp.YOffset() == first
+  press(&app, ["esc"])
+  assert app.search == ""
+  assert app.screen == Screen.Conv
+  press(&app, ["esc"])
+  assert app.screen == Screen.List
+}
+
+#[test("목록 필터: 브랜치, 날짜, cwd")]
+fn list_filter_fields() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  press(&app, ["/"])
+  for r in "feature/x".split("") {
+    press(&app, [r])
+  }
+  assert app.rows.length() == 1
+  press(&app, ["esc", "/"])
+  for r in "2026-02-01".split("") {
+    press(&app, [r])
+  }
+  assert app.rows.length() == 1
+  press(&app, ["esc", "a", "/"])
+  for r in "work/other".split("") {
+    press(&app, [r])
+  }
+  // make_root 에서 cwd 가 /work/other 인 세션은 두 개 (demo 폴더에 복사한 것 포함)
+  assert app.rows.length() == 2
+}
