@@ -13,7 +13,7 @@
   - `--publish`: 작업 트리가 깨끗한지 확인 후 `gh release create` 로 업로드하고,
     `git@github.com:soomtong/homebrew-tap.git` 의 `Formula/cci.rb` 를 갱신해 push 한다.
     GitHub Release 와 tap push 는 외부 공개 작업이므로 사용자 확인 후에만 실행한다.
-  - `REPO`(기본 soomtong/claude-code-viewer), `TAP` 환경변수로 대상 변경.
+  - `REPO`(기본 soomtong/claude-code-history-viewer), `TAP` 환경변수로 대상 변경.
 - 버전은 `src/main.lis` 의 `VERSION` 상수에서 읽는다 (Lisette const 라 `-ldflags -X` 주입 불가).
   릴리스 전에 상수를 올린다. 태그는 `v<VERSION>`.
 - `target/`, `dist/` 는 .gitignore. target/go.mod 에 shim 절대경로 replace 가 있어 빌드 머신에서 매번 `lis emit`.

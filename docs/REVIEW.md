@@ -45,7 +45,7 @@ Lisette + Bubble Tea 조합은 실현 가능하다. 다만 "순수 Lisette 만�
 
 ### 1.3 프로젝트 구조에 대한 함의
 
-- `src/` 에는 `.lis` 만 둘 수 있으므로 shim 은 저장소 루트의 별도 Go 모듈(`shim/go.mod`, 모듈 경로 예: `github.com/soomtong/claude-code-viewer/shim`)로 두고 `lis add --path ./shim` 으로 연결한다.
+- `src/` 에는 `.lis` 만 둘 수 있으므로 shim 은 저장소 루트의 별도 Go 모듈(`shim/go.mod`, 모듈 경로 예: `github.com/soomtong/claude-code-history-viewer/shim`)로 두고 `lis add --path ./shim` 으로 연결한다.
 - `target/go.mod` 에 shim 의 절대경로 `replace` 가 박히므로, CI 에서는 반드시 그 머신에서 `lis emit`(또는 `lis build`) 을 다시 실행해야 한다. `target/` 을 커밋해서 재사용하는 방식은 shim 과 궁합이 나쁘다.
 - Lisette 가 shim 에 의존하는 순간 "로직은 Lisette, UI 글루 일부는 Go" 가 된다. 계획 Phase 0 의 대안 (a) 와 사실상 같은 형태이므로, 이를 실패가 아니라 기본 설계로 못 박는 편이 낫다.
 

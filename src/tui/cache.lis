@@ -38,10 +38,7 @@ fn layout_spans(
 }
 
 fn total_lines(spans: Slice<Span>) -> int {
-  match spans.get(spans.length() - 1) {
-    Some(last) => last.start + last.lines,
-    None => 0,
-  }
+  spans.get(spans.length() - 1).map_or(0, |last| last.start + last.lines)
 }
 
 /// 다시 배치한 뒤 맨 위에 올 줄. anchor 메시지가 사라졌으면 그 뒤 첫 메시지.

@@ -1,4 +1,4 @@
-import "go:github.com/soomtong/claude-code-viewer/shim"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:os"
 import "go:path/filepath"
 import "go:strings"

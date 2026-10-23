@@ -22,11 +22,11 @@ pub struct Toggles {
 impl Toggles {
   pub fn sig(self) -> string {
     let mut s = ""
-    if self.tools { s = s + "t" }
-    if self.thinking { s = s + "T" }
-    if self.code { s = s + "c" }
-    if self.expand { s = s + "e" }
-    if self.debug { s = s + "D" }
+    if self.tools { s += "t" }
+    if self.thinking { s += "T" }
+    if self.code { s += "c" }
+    if self.expand { s += "e" }
+    if self.debug { s += "D" }
     s
   }
 }
@@ -85,13 +85,8 @@ pub fn wrap(text: string, width: int) -> string {
 }
 
 pub fn fmt_time(ts: string, with_date: bool) -> string {
-  match time.Parse(time.RFC3339, ts) {
-    Ok(t) => {
-      let layout = if with_date { "2006-01-02 15:04" } else { "15:04" }
-      t.Local().Format(layout)
-    },
-    Err(_) => "",
-  }
+  let layout = if with_date { "2006-01-02 15:04" } else { "15:04" }
+  time.Parse(time.RFC3339, ts).map_or("", |t| t.Local().Format(layout))
 }
 
 /// 줄 목록을 max 줄로 접는다. 접힌 경우 안내 줄을 붙인다.
@@ -175,13 +170,13 @@ pub fn render_markdown(
   width: int,
   md: Option<Ref<glamour.TermRenderer>>,
 ) -> string {
-  match md {
-    Some(r) => match r.Render(text) {
-      Ok(out) => strings.Trim(out, "\n"),
-      Err(_) => wrap(text, width),
-    },
-    None => wrap(text, width),
-  }
+  md.map_or_else(
+    || wrap(text, width),
+    |r| r.Render(text).map_or_else(
+      |_| wrap(text, width),
+      |out| strings.Trim(out, "\n"),
+    ),
+  )
 }
 
 /// 메시지 하나를 문자열로 렌더한다 (끝 개행 없음).

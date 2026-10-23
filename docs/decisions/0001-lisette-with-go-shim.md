@@ -10,7 +10,7 @@ Lisette 에서 직접 사용 가능함을 확인했다. bubbles 컴포넌트(vie
 
 ## 결정
 
-- 저장소 루트 `shim/` 에 Go 모듈 `github.com/soomtong/claude-code-viewer/shim` 을 두고
+- 저장소 루트 `shim/` 에 Go 모듈 `github.com/soomtong/claude-code-history-viewer/shim` 을 두고
   `lis add --path ./shim` 으로 연결한다. lisette.toml 에는 `{ path = "shim" }` 로 기록된다.
 - shim 이 노출하는 것
   - `Viewport`: bubbles viewport 를 감싼 불투명 타입. 포인터 메서드만 노출(SetContent, SetSize,

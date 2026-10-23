@@ -1,6 +1,6 @@
 // jsonl 한 줄 단위 파서. 규칙은 docs/decisions/0002-data-model.md 참고.
 import "go:encoding/json"
-import "go:sort"
+import "go:slices"
 import "go:strings"
 
 import "model"
@@ -98,7 +98,7 @@ pub fn is_meta_text(text: string) -> bool {
   let t = strings.TrimSpace(text)
   if t.starts_with("[Request interrupted") { return true }
   if !t.starts_with("<") { return false }
-  for tag in strings.Fields(META_TAGS) {
+  for tag in strings.FieldsSeq(META_TAGS) {
     if t.starts_with(f"<{tag}>") || t.starts_with(f"<{tag} ") { return true }
   }
   false
@@ -139,7 +139,7 @@ fn tool_summary(name: string, input: Map<string, Unknown>) -> string {
   for (k, _) in input {
     keys = keys.append(k)
   }
-  sort.Strings(keys)
+  slices.Sort(keys)
   for k in keys {
     let v = str_of(input, k)
     if v != "" { return one_line(f"{k}={v}", 100) }
@@ -253,17 +253,7 @@ pub fn new_conversation(meta_only: bool) -> mut Conversation {
     meta_only,
     unknown_types: Map.new<string, int>(),
     unknown_blocks: Map.new<string, int>(),
-    broken: 0,
-    lines: 0,
-    cwd: "",
-    git_branch: "",
-    ai_title: None,
-    custom_title: None,
-    first_prompt: "",
-    started: "",
-    updated: "",
-    prompt_count: 0,
-    continued_in: None,
+    ..
   }
 }
 
@@ -444,7 +434,7 @@ impl Conversation {
             )),
             "tool_use" => {
               let name = b.name.unwrap_or("")
-              let input = b.input.unwrap_or(Map.new<string, Unknown>())
+              let input = b.input.unwrap_or_else(|| Map.new<string, Unknown>())
               blocks = blocks.append(
                 model.Block.ToolUse {
                   name,

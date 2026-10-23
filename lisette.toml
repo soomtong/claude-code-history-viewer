@@ -1,5 +1,5 @@
 [project]
-name = "claude-code-viewer"
+name = "claude-code-history-viewer"
 version = "0.1.1"
 
 [dependencies.go]
@@ -49,5 +49,5 @@ version = "0.1.1"
 "golang.org/x/term" = { version = "v0.45.0", via = ["github.com/charmbracelet/glamour", "golang.org/x/crypto", "golang.org/x/net"] }
 "golang.org/x/text" = { version = "v0.41.0", via = ["github.com/charmbracelet/glamour", "golang.org/x/net"] }
 "golang.org/x/tools" = { version = "v0.48.0", via = ["golang.org/x/text"] }
-"github.com/soomtong/claude-code-viewer/shim" = { path = "shim" }
+"github.com/soomtong/claude-code-history-viewer/shim" = { path = "shim" }
 "github.com/BurntSushi/toml" = "v1.6.0"

@@ -1,4 +1,4 @@
-module github.com/soomtong/claude-code-viewer/shim
+module github.com/soomtong/claude-code-history-viewer/shim
 
 go 1.26
 

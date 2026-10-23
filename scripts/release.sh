@@ -5,13 +5,13 @@
 #   scripts/release.sh --publish  GitHub Release 업로드와 tap push 까지 수행 (외부 공개 작업)
 #
 # 환경변수
-#   REPO  GitHub 저장소 (기본 soomtong/claude-code-viewer)
+#   REPO  GitHub 저장소 (기본 soomtong/claude-code-history-viewer)
 #   TAP   tap 저장소 URL (기본 git@github.com:soomtong/homebrew-tap.git)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT=$PWD
-REPO=${REPO:-soomtong/claude-code-viewer}
+REPO=${REPO:-soomtong/claude-code-history-viewer}
 TAP=${TAP:-git@github.com:soomtong/homebrew-tap.git}
 PUBLISH=0
 [[ "${1:-}" == "--publish" ]] && PUBLISH=1

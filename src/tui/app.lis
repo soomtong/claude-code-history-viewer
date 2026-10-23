@@ -4,7 +4,7 @@ import "go:github.com/atotto/clipboard"
 import "go:github.com/charmbracelet/bubbletea"
 import "go:github.com/charmbracelet/glamour"
 import "go:github.com/charmbracelet/lipgloss"
-import "go:github.com/soomtong/claude-code-viewer/shim"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:path/filepath"
 import "go:strings"
 import "go:time"
@@ -97,17 +97,9 @@ pub fn new_app(opts: Options) -> mut App {
     screen: Screen.List,
     width: 80,
     height: 24,
-    help: false,
-    status: "",
-    quitting: false,
     scope: opts.scope,
     sessions: [],
     rows: [],
-    cursor: 0,
-    top: 0,
-    filter: "",
-    filter_editing: false,
-    has_conv: false,
     conv: session.new_conversation(false),
     tail: session.new_tail(""),
     current: model.Session { .. },
@@ -115,24 +107,13 @@ pub fn new_app(opts: Options) -> mut App {
     spans: [],
     toggles: Toggles { .. },
     role: RoleFilter.All,
-    content: "",
     plain_lines: [],
-    search: "",
-    search_editing: false,
     matches: [],
-    match_idx: 0,
-    md: None,
-    md_width: 0,
-    resize_gen: 0,
     cache: Map.new<string, string>(),
-    md_renders: 0,
-    modal: None,
     trash_root,
     dirs: [],
-    watch_hook: None,
     follow: opts.watch,
-    new_count: 0,
-    announced_next: "",
+    ..
   }
   if opts.open_path != "" {
     app.open_path(opts.open_path)
@@ -144,7 +125,7 @@ pub fn new_app(opts: Options) -> mut App {
 
 fn backspace(s: string) -> string {
   let rs = s.runes()
-  if rs.length() == 0 { return s }
+  if rs.is_empty() { return s }
   rs[..rs.length() - 1] as string
 }
 
@@ -262,7 +243,7 @@ impl App {
         "enter" => self.filter_editing = false,
         "backspace" => self.filter = backspace(self.filter),
         _ => {
-          if let Some(s) = typed(key) { self.filter = self.filter + s }
+          if let Some(s) = typed(key) { self.filter += s }
         },
       }
       self.apply_filter()
@@ -421,10 +402,7 @@ impl App {
   }
 
   pub fn reload_list(self: mut Ref<Self>) {
-    let keep = match self.selected() {
-      Some(s) => s.id,
-      None => "",
-    }
+    let keep = self.selected().map_or("", |s| s.id)
     let dirs = session.project_dirs(self.opts.root, self.opts.cwd, self.scope)
     self.sessions = session.list_sessions(dirs)
     self.dirs = dirs
@@ -635,7 +613,7 @@ impl App {
 
   fn back_to_list(self: mut Ref<Self>) {
     self.screen = Screen.List
-    if self.sessions.length() == 0 { self.reload_list() }
+    if self.sessions.is_empty() { self.reload_list() }
     self.select_id(self.current.id)
   }
 
@@ -655,13 +633,10 @@ impl App {
     } else {
       glamour.WithStandardStyle(self.opts.theme)
     }
-    self.md = match glamour.NewTermRenderer(
+    self.md = glamour.NewTermRenderer(
       style,
       glamour.WithWordWrap(max(width - 4, 10)),
-    ) {
-      Ok(r) => Some(r),
-      Err(_) => None,
-    }
+    ).ok()
     self.md_width = width
   }
 
@@ -721,7 +696,7 @@ impl App {
       let when = fmt_time(s.updated, true)
       let counts = f"{s.msg_count}/{s.prompt_count}"
       let mut row = fmt.Sprintf(" %-16s  %6s  %s", when, counts, s.title)
-      if all_mode && s.cwd != "" { row = row + st_faint().Render("  " + s.cwd) }
+      if all_mode && s.cwd != "" { row += st_faint().Render("  " + s.cwd) }
       row = clip(row, self.width - 1)
       if i == self.cursor { row = st_selected().Render(row) }
       lines = lines.append(row)

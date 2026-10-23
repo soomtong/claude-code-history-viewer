@@ -62,7 +62,7 @@ Claude Code 대화 내용을 터미널에서 복기하기 위한 TUI 뷰어.
 ## 1. 이름
 
 - 바이너리 이름: `cci` (손가락이 편함). 의미는 "Claude Code Inspector"로 둔다.
-- 저장소/프로젝트 이름은 `claude-code-viewer` 유지, brew formula 이름은 `cci`.
+- 저장소/프로젝트 이름은 `claude-code-history-viewer`, brew formula 이름은 `cci`.
 - 후보였던 ccv, ccr 은 타이핑이 불편하여 제외.
 
 ## 2. 목적과 비목적

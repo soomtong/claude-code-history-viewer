@@ -1,10 +1,10 @@
-# claude-code-viewer (cci)
+# claude-code-history-viewer (cci)
 
 Claude Code 와 나눈 대화를 터미널에서 복기하기 위한 TUI. 도구 호출이나 로그보다 대화 내용 중심으로 보여준다.
 
 ```bash
 lis run          # 개발 실행
-lis build        # target/.lisette/bin/claude-code-viewer
+lis build        # target/.lisette/bin/claude-code-history-viewer
 ```
 
 ## 실행
