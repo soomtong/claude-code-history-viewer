@@ -188,21 +188,21 @@ fn delete_modal() {
     assert false
     return
   }
-  press(&app, ["d"])
+  press(&app, ["D"])
   assert app.modal.is_some()
   assert app.View().contains("정말 삭제할까요?")
   press(&app, ["enter"])
   assert app.modal.is_none()
   assert os.Stat(target.path).is_ok()
-  press(&app, ["d", "n"])
+  press(&app, ["D", "n"])
   assert os.Stat(target.path).is_ok()
   // 열람 중이면 차단
-  press(&app, ["enter", "h", "d"])
+  press(&app, ["enter", "h", "D"])
   assert app.View().contains("현재 열람 중")
   press(&app, ["y"])
   assert os.Stat(target.path).is_ok()
   // R 로 열람 해제 후 삭제
-  press(&app, ["R", "d", "y"])
+  press(&app, ["R", "D", "y"])
   assert os.Stat(target.path).is_err()
   assert app.sessions.length() == 1
   assert app.status.contains(".Trash")

@@ -291,9 +291,11 @@ impl App {
         self.filter = ""
         self.apply_filter()
       },
-      "d" => {
+      "D" => {
         if let Some(s) = self.selected() { self.ask_delete(s) }
       },
+      "d" => self.move_cursor(max(page / 4, 1)),
+      "u" => self.move_cursor(-max(page / 4, 1)),
       "R" | "ctrl+r" => {
         // 새로고침은 열람 중 표시도 해제한다
         self.has_conv = false
@@ -326,6 +328,8 @@ impl App {
       "?" => self.help = true,
       "j" | "down" => self.vp.LineDown(1),
       "k" | "up" => self.vp.LineUp(1),
+      "d" => self.vp.LineDown(max(self.vp.Height() / 4, 1)),
+      "u" => self.vp.LineUp(max(self.vp.Height() / 4, 1)),
       "ctrl+d" => self.vp.HalfPageDown(),
       "ctrl+u" => self.vp.HalfPageUp(),
       "ctrl+f" | "pgdown" | " " => self.vp.PageDown(),
@@ -392,7 +396,7 @@ impl App {
         self.status = on_off("접힌 블록 펼치기", self.toggles.expand)
         self.relayout()
       },
-      "D" => {
+      "P" => {
         self.toggles.debug = !self.toggles.debug
         self.status = on_off(
           "디버그(메타, 알 수 없는 블록)",
@@ -718,7 +722,7 @@ impl App {
       lines = lines.append("")
     }
     lines = lines.append(self.status_line(
-      "enter 열기 · / 필터 · d 삭제 · y resume 복사 · a 범위 · R 새로고침 · ? 도움말 · q 종료",
+      "enter 열기 · / 필터 · D 삭제 · y resume 복사 · a 범위 · R 새로고침 · ? 도움말 · q 종료",
     ))
     lines.join("\n")
   }
@@ -801,12 +805,12 @@ impl App {
     let text = "cci 키 바인딩
 
 공통   ? 도움말  q 종료  ctrl+c 강제 종료
-이동   j/k ↓/↑  ctrl+d/u 반 페이지  ctrl+f/b PgDn/PgUp 페이지  g/G Home/End
+이동   j/k ↓/↑  d/u 1/4 페이지  ctrl+d/u 반 페이지  ctrl+f/b PgDn/PgUp 페이지  g/G Home/End
 목록   enter/l/→ 열기  / 필터(제목, 첫 프롬프트, cwd, 브랜치, 날짜)  esc 필터 해제
-       d 삭제(확인 모달)  y claude --resume 복사  a 전체/현재 범위 전환  R/ctrl+r 새로고침
+       D 삭제(확인 모달)  y claude --resume 복사  a 전체/현재 범위 전환  R/ctrl+r 새로고침
 대화   h/←/esc 목록으로  ]/[ 다음/이전 메시지  }/{ 다음/이전 프롬프트
        / 검색  n/N 다음/이전 매치(검색 중) 또는 메시지
-       r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  D 디버그
+       r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  P 디버그
        F follow 토글  o 이어진 세션 열기  y resume 복사
 
 아무 키나 누르면 닫힙니다."

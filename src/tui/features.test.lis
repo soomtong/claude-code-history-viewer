@@ -54,7 +54,7 @@ fn toggles() {
   assert !s2.contains("⚙ Bash")
   press(&app, ["T"])
   assert screen(&app).contains("Plan the greet function.")
-  press(&app, ["D"])
+  press(&app, ["P"])
   let s3 = screen(&app)
   assert s3.contains("<command-name>/clear</command-name>")
   assert s3.contains("[unknown block: tool_addition]")
