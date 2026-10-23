@@ -292,7 +292,7 @@ impl App {
         self.apply_filter()
       },
       "D" => {
-        if let Some(s) = self.selected() { self.ask_delete(s) }
+        if let Some(s) = self.selected() { self.ask_delete(s, false) }
       },
       "d" => self.move_cursor(max(page / 4, 1)),
       "u" => self.move_cursor(-max(page / 4, 1)),
@@ -396,6 +396,7 @@ impl App {
         self.status = on_off("접힌 블록 펼치기", self.toggles.expand)
         self.relayout()
       },
+      "D" => self.ask_delete(self.current, true),
       "P" => {
         self.toggles.debug = !self.toggles.debug
         self.status = on_off(
@@ -497,8 +498,9 @@ impl App {
   // ---------- 삭제 ----------
 
   /// 삭제 확인 모달을 띄운다. 검증 실패는 상태줄에 표시하고 모달을 띄우지 않는다.
-  pub fn ask_delete(self: mut Ref<Self>, s: model.Session) {
-    let open_id = if self.has_conv { self.current.id } else { "" }
+  pub fn ask_delete(self: mut Ref<Self>, s: model.Session, from_conv: bool) {
+    // 대화 화면에서 현재 세션을 지우는 경우는 열람 중 차단을 적용하지 않는다
+    let open_id = if self.has_conv && !from_conv { self.current.id } else { "" }
     match session.plan_delete(
       self.opts.root,
       s.path,
@@ -530,6 +532,12 @@ impl App {
           f"영구 삭제됨: {plan.session_id}"
         } else {
           f"휴지통으로 이동: {plan.trash_dir}"
+        }
+        // 열람 중이던 세션을 지웠으면 목록으로 돌아간다
+        if self.screen == Screen.Conv {
+          self.has_conv = false
+          self.screen = Screen.List
+          self.notify_dirs()
         }
       },
       Err(e) => self.status = f"삭제 실패: {e}",
@@ -810,7 +818,7 @@ impl App {
        D 삭제(확인 모달)  y claude --resume 복사  a 전체/현재 범위 전환  R/ctrl+r 새로고침
 대화   h/←/esc 목록으로  ]/[ 다음/이전 메시지  }/{ 다음/이전 프롬프트
        / 검색  n/N 다음/이전 매치(검색 중) 또는 메시지
-       r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  P 디버그
+       D 현재 세션 삭제  r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  P 디버그
        F follow 토글  o 이어진 세션 열기  y resume 복사
 
 아무 키나 누르면 닫힙니다."

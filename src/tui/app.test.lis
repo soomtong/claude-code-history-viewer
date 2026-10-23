@@ -207,3 +207,36 @@ fn delete_modal() {
   assert app.sessions.length() == 1
   assert app.status.contains(".Trash")
 }
+
+#[test("대화 화면에서 D: 현재 세션 삭제 후 목록으로 복귀")]
+fn delete_from_conv() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let old_home = os.Getenv("HOME")
+  let _ = os.Setenv("HOME", root)
+  defer {
+    let _ = os.Setenv("HOME", old_home)
+  }
+  let real_root = filepath.EvalSymlinks(root).unwrap_or(root)
+  let mut app = new_app(opts(real_root))
+  let _ = app.Update(shim.WindowSize(120, 30))
+  let Some(target) = app.selected() else {
+    assert false
+    return
+  }
+  // 취소하면 대화 화면에 남는다
+  press(&app, ["enter", "D"])
+  assert app.modal.is_some()
+  assert !app.View().contains("현재 열람 중")
+  press(&app, ["n"])
+  assert app.screen == Screen.Conv
+  assert os.Stat(target.path).is_ok()
+  // y 로 삭제하면 목록으로 돌아간다
+  press(&app, ["D", "y"])
+  assert os.Stat(target.path).is_err()
+  assert app.screen == Screen.List
+  assert !app.has_conv
+  assert app.sessions.length() == 1
+}
