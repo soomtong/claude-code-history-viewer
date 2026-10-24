@@ -13,6 +13,8 @@ permissions:
 
 env:
   LISETTE_VERSION: 0.12.4
+  # lisette-x86_64-unknown-linux-musl.tar.xz 의 sha256 (버전을 올리면 함께 갱신)
+  LISETTE_SHA256: 85c81ed6fff82bb8532b9b132d832631d4cb3bafbd22f77f4807521373d6e48b
 
 jobs:
   release:
@@ -24,16 +26,16 @@ jobs:
         with:
           go-version: "1.26"
 
-      - name: Cache lis
-        id: lis-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/lis
-          key: lis-${{ runner.os }}-${{ env.LISETTE_VERSION }}
+      - name: Install lis (prebuilt)
+        run: |
+          name=lisette-x86_64-unknown-linux-musl
+          curl -fsSL -o "$RUNNER_TEMP/$name.tar.xz" \
+            "https://github.com/ivov/lisette/releases/download/lisette-v$LISETTE_VERSION/$name.tar.xz"
+          echo "$LISETTE_SHA256  $RUNNER_TEMP/$name.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$name.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
 
-      - name: Install lis
-        if: steps.lis-cache.outputs.cache-hit != 'true'
-        run: cargo install lisette --version "$LISETTE_VERSION" --locked
+      - run: lis --version
 
       - name: Check tag matches VERSION
         if: github.ref_type == 'tag'
