@@ -18,7 +18,8 @@
   릴리스 전에 상수를 올린다. 태그는 `v<VERSION>`.
 - CI: `.github/workflows/release.yml` 이 `v*` 태그 push 시 `scripts/release.sh --publish` 를 실행한다.
   Release 업로드는 `GITHUB_TOKEN`, tap push 는 시크릿 `HOMEBREW_TAP_TOKEN` 을 쓴다(`TAP` 을 https 토큰 URL 로 지정).
-  태그와 `VERSION` 이 다르면 실패한다.
+  태그와 `VERSION` 이 다르면 실패한다. 수동 실행(`workflow_dispatch`)을 main 에서 하면 태그 없이도
+  `gh release create` 가 main HEAD 에 `v<VERSION>` 태그를 만든다.
 - `target/`, `dist/` 는 .gitignore. target/go.mod 에 shim 절대경로 replace 가 있어 빌드 머신에서 매번 `lis emit`.
 
 ## 검증
