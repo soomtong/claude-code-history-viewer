@@ -173,6 +173,9 @@ impl App {
   #[allow(non_snake_case_function)]
   pub fn View(self: mut Ref<Self>) -> string {
     if self.quitting { return "" }
+    if self.width < MIN_WIDTH || self.height < MIN_HEIGHT {
+      return self.view_too_small()
+    }
     if self.help { return self.view_help() }
     if let Some(plan) = self.modal { return self.view_modal(plan) }
     match self.screen {
@@ -214,6 +217,14 @@ impl App {
     if k == "ctrl+c" {
       self.quitting = true
       return Some(tea.Quit)
+    }
+    // 화면이 안 보이는 동안 삭제 모달 같은 동작이 몰래 일어나지 않게 종료만 받는다
+    if self.width < MIN_WIDTH || self.height < MIN_HEIGHT {
+      if k == "q" {
+        self.quitting = true
+        return Some(tea.Quit)
+      }
+      return None
     }
     if self.help {
       self.help = false
@@ -633,9 +644,11 @@ impl App {
     } else {
       glamour.WithStandardStyle(self.opts.theme)
     }
+    // glamour 는 기본이 TrueColor 라 터미널 색 지원 수준과 NO_COLOR 를 따르도록 lipgloss 판단을 넘긴다
     self.md = glamour.NewTermRenderer(
       style,
       glamour.WithWordWrap(max(width - 4, 10)),
+      glamour.WithColorProfile(lipgloss.ColorProfile()),
     ).ok()
     self.md_width = width
   }
@@ -730,6 +743,17 @@ impl App {
       ],
       _ => ["", st_warn().Render(f"  세션이 없습니다: {self.opts.root}")],
     }
+  }
+
+  /// 창이 최소 크기보다 작을 때. 폭이 좁아도 잘리지 않게 짧은 줄로 나눈다.
+  fn view_too_small(self: Ref<Self>) -> string {
+    let lines = [
+      "창이 작습니다",
+      f"{self.width}x{self.height}",
+      f"최소 {MIN_WIDTH}x{MIN_HEIGHT}",
+      "q 종료",
+    ]
+    lines[..min(lines.length(), max(self.height, 1))].join("\n")
   }
 
   fn status_line(self: Ref<Self>, hint: string) -> string {

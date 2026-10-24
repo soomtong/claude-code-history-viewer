@@ -15,9 +15,11 @@ cci --all         # 전체 프로젝트의 세션
 cci --list        # TUI 없이 목록 출력
 cci <id|경로.jsonl>  # 세션 바로 열기
 cci --no-watch    # 모니터링 끄기 (기본은 켜짐)
+cci --theme light # 밝은 배경 터미널 (auto 면 배경을 감지)
+cci --no-color    # 색 끄기 (NO_COLOR, TERM=dumb 도 자동으로 끔)
 ```
 
-전체 옵션은 `cci --help`.
+전체 옵션은 `cci --help`. 창이 24x3 보다 작으면 크기 안내만 보이고 `q` 로 종료할 수 있다.
 
 ## 단축키
 
