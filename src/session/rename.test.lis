@@ -1,0 +1,53 @@
+import "go:os"
+import "go:path/filepath"
+import "go:strings"
+
+#[test("제목 정리: 줄바꿈/탭은 공백, 앞뒤 공백 제거, 최대 길이")]
+fn cleans_title() {
+  assert clean_title("  새 제목\n둘째 줄\t끝  ") == "새 제목 둘째 줄 끝"
+  assert clean_title(" \n ") == ""
+  assert clean_title(strings.Repeat("가", MAX_TITLE + 10)).runes().length() == MAX_TITLE
+}
+
+#[test("custom-title 줄을 덧붙이고 목록 메타 제목이 바뀐다, 기존 줄은 그대로")]
+fn renames() -> Result<(), error> {
+  let t = make_del_tree()
+  defer {
+    let _ = os.RemoveAll(t.home)
+  }
+  // 개행 없이 끝나는 파일에도 줄이 섞이지 않게 붙는다
+  write(
+    t.jsonl,
+    "{\"type\":\"custom-title\",\"customTitle\":\"옛 제목\",\"sessionId\":\"x\"}",
+  )
+  let before = os.ReadFile(t.jsonl)? as string
+  let saved = rename_session(t.root, t.jsonl, " 새 제목\n")?
+  assert saved == "새 제목"
+  let after = os.ReadFile(t.jsonl)? as string
+  assert after.starts_with(before + "\n")
+  assert after.ends_with("\n")
+  assert after.contains("\"sessionId\":\"" + DEL_ID + "\"")
+  let meta = load_meta(t.jsonl)?
+  assert meta.title == "새 제목"
+  // 두 번 바꾸면 마지막 제목
+  let _ = rename_session(t.root, t.jsonl, "세 번째")?
+  let last = load_meta(t.jsonl)?
+  assert last.title == "세 번째"
+  Ok(())
+}
+
+#[test("빈 제목, projects 밖, 세션 파일이 아닌 경로는 거부")]
+fn rejects() {
+  let t = make_del_tree()
+  defer {
+    let _ = os.RemoveAll(t.home)
+  }
+  let before = os.ReadFile(t.jsonl).unwrap_or([]) as string
+  assert rename_session(t.root, t.jsonl, "  ").is_err()
+  assert rename_session(t.root, filepath.Join(t.proj, "memory", "MEMORY.md"), "x").is_err()
+  let outside = filepath.Join(t.home, DEL_ID + ".jsonl")
+  write(outside, "{}\n")
+  assert rename_session(t.root, outside, "x").is_err()
+  assert rename_session(t.root, "relative/" + DEL_ID + ".jsonl", "x").is_err()
+  assert (os.ReadFile(t.jsonl).unwrap_or([]) as string) == before
+}

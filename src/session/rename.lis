@@ -1,0 +1,64 @@
+// 세션 제목 변경. Claude Code 의 /rename 과 같이 jsonl 끝에 custom-title 줄을 덧붙인다.
+// 파서는 마지막 custom-title 을 쓰므로 기존 줄은 건드리지 않는다 (docs/decisions/0012).
+import "go:encoding/json"
+import "go:errors"
+import "go:os"
+import "go:strings"
+
+/// 제목 최대 길이(룬)
+pub const MAX_TITLE = 200
+
+#[json]
+struct TitleEvent {
+  #[json("type")]
+  kind: string,
+  #[json("customTitle")]
+  custom_title: string,
+  #[json("sessionId")]
+  session_id: string,
+}
+
+/// 제목을 한 줄로 정리한다: 줄바꿈/탭은 공백으로, 앞뒤 공백 제거, MAX_TITLE 룬까지.
+pub fn clean_title(title: string) -> string {
+  let mut s = title
+  for ws in ["\r\n", "\n", "\r", "\t"] {
+    s = strings.ReplaceAll(s, ws, " ")
+  }
+  s = strings.TrimSpace(s)
+  let rs = s.runes()
+  if rs.length() > MAX_TITLE { return strings.TrimSpace(rs[..MAX_TITLE] as string) }
+  s
+}
+
+/// 파일이 비었거나 개행으로 끝나는지 (아니면 덧붙이기 전에 개행을 넣는다)
+fn ends_with_newline(f: Ref<os.File>, size: int64) -> bool {
+  if size == 0 { return true }
+  let mut b = Slice.make<byte>(1)
+  match f.ReadAt(b, size - 1) {
+    Partial.Ok(n) => n == 1 && b[0] == 10,
+    Partial.Both(n, _) => n == 1 && b[0] == 10,
+    Partial.Err(_) => true,
+  }
+}
+
+/// 세션 제목을 바꾸고 실제로 기록한 제목을 돌려준다. path 는 삭제와 같은 화이트리스트로 검증한다.
+pub fn rename_session(
+  root: string,
+  path: string,
+  title: string,
+) -> Result<string, error> {
+  let sp = check_session_path(root, path)?
+  let t = clean_title(title)
+  if t == "" { return Err(errors.New("제목이 비어 있습니다")) }
+  let ev = TitleEvent { kind: "custom-title", custom_title: t, session_id: sp.id }
+  let data = json.Marshal(ev)?
+  let f = os.OpenFile(sp.clean, os.O_RDWR | os.O_APPEND, 0)?
+  defer f.Close()
+  let info = f.Stat()?
+  let lead = if ends_with_newline(f, info.Size()) { "" } else { "\n" }
+  match f.WriteString(lead + (data as string) + "\n") {
+    Partial.Ok(_) => Ok(t),
+    Partial.Err(e) => Err(e),
+    Partial.Both(_, e) => Err(e),
+  }
+}

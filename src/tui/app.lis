@@ -80,6 +80,8 @@ pub struct App {
   // 삭제 확인 모달
   pub modal: Option<session.DeletePlan>,
   trash_root: string,
+  // 제목 변경 입력창
+  pub renaming: Option<RenameInput>,
   // 모니터링
   pub dirs: Slice<string>,
   watch_hook: Option<fn(Slice<string>)>,
@@ -177,6 +179,7 @@ impl App {
     }
     if self.help { return self.view_help() }
     if let Some(plan) = self.modal { return self.view_modal(plan) }
+    if let Some(r) = self.renaming { return self.view_rename(r) }
     match self.screen {
       Screen.List => self.view_list(),
       Screen.Conv => self.view_conv(),
@@ -234,6 +237,10 @@ impl App {
       self.on_modal_key(plan, k)
       return None
     }
+    if let Some(r) = self.renaming {
+      self.on_rename_key(r, key, k)
+      return None
+    }
     match self.screen {
       Screen.List => self.on_list_key(key, k),
       Screen.Conv => self.on_conv_key(key, k),
@@ -288,7 +295,10 @@ impl App {
       },
       "d" => self.move_cursor(max(page / 4, 1)),
       "u" => self.move_cursor(-max(page / 4, 1)),
-      "R" | "ctrl+r" => {
+      "R" => {
+        if let Some(s) = self.selected() { self.ask_rename(s) }
+      },
+      "ctrl+r" => {
         // 새로고침은 열람 중 표시도 해제한다
         self.has_conv = false
         self.reload_list()
@@ -389,6 +399,7 @@ impl App {
         self.relayout()
       },
       "D" => self.ask_delete(self.current, true),
+      "R" => self.ask_rename(self.current),
       "P" => {
         self.toggles.debug = !self.toggles.debug
         self.status = on_off(
@@ -425,7 +436,7 @@ impl App {
 
   /// 현재 필터 결과의 목록 줄 배치 (날짜 묶음 포함)
   fn list_layout(self: Ref<Self>) -> Slice<ListLine> {
-    let times = self.rows.map(|r| self.sessions[r].updated)
+    let times = self.rows.map(|r| list_time(self.sessions[r]))
     list_lines(times, self.list_per_item(), time.Now())
   }
 
@@ -751,9 +762,10 @@ impl App {
         hint("↵", "열기"),
         hint("/", "필터"),
         hint("D", "삭제"),
+        hint("R", "제목"),
         hint("y", "resume 복사"),
         hint("a", "범위"),
-        hint("R", "새로고침"),
+        hint("^r", "새로고침"),
         hint("?", "전체 키"),
         hint("q", "종료"),
       ]
@@ -790,7 +802,7 @@ impl App {
             base
           }
           let right = over(st_faint(), base).Render(
-            short_time(s.updated, now) + " ",
+            short_time(list_time(s), now) + " ",
           )
           fit(lead + st.Render(title), right, self.width, base)
         } else {
@@ -982,10 +994,10 @@ impl App {
 공통   ? 도움말  q 종료  ctrl+c 강제 종료
 이동   j/k ↓/↑  d/u 1/4 페이지  ctrl+d/u 반 페이지  ctrl+f/b PgDn/PgUp 페이지  g/G Home/End
 목록   enter/l/→ 열기  / 필터(제목, 첫 프롬프트, cwd, 브랜치, 날짜)  esc 필터 해제
-       D 삭제(확인 모달)  y claude --resume 복사  a 전체/현재 범위 전환  R/ctrl+r 새로고침
+       D 삭제(확인 모달)  R 제목 변경  y claude --resume 복사  a 전체/현재 범위 전환  ctrl+r 새로고침
 대화   h/←/esc 목록으로  ]/[ 다음/이전 메시지  }/{ 다음/이전 프롬프트
        / 검색  n/N 다음/이전 매치(검색 중) 또는 메시지
-       D 현재 세션 삭제  r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  P 디버그
+       D 현재 세션 삭제  R 제목 변경  r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  P 디버그
        F follow 토글  o 이어진 세션 열기  y resume 복사
 표식   › 프롬프트  ● 응답, 도구 호출  ⎿ 도구 결과  ✗ 오류  ✻ thinking  ◆ 스크롤바의 프롬프트 위치
 
@@ -1015,6 +1027,7 @@ pub fn matches_session(s: model.Session, q: string) -> bool {
       s.git_branch,
       fmt_time(s.updated, true),
       fmt_time(s.started, true),
+      fmt_time(list_time(s), true),
       s.id,
     ].join(
     "\n",
@@ -1030,4 +1043,11 @@ pub fn session_meta(s: model.Session, all_mode: bool) -> string {
   parts = parts.append(f"프롬프트 {s.prompt_count}")
   if all_mode && s.cwd != "" { parts = parts.append(s.cwd) }
   parts.join(" · ")
+}
+
+/// 목록의 정렬 기준(파일 수정 시각)을 RFC3339 로. 묶음과 표시 시각을 정렬과 맞춘다.
+/// 제목 변경처럼 메시지 없이 파일만 바뀌어도 순서와 묶음이 어긋나지 않는다.
+pub fn list_time(s: model.Session) -> string {
+  if s.mtime <= 0 { return s.updated }
+  time.Unix(s.mtime, 0).Format(time.RFC3339)
 }

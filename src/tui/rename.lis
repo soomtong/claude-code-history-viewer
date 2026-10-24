@@ -1,0 +1,93 @@
+// 세션 제목 변경 입력창 (R). 목록에서는 선택한 세션, 대화 화면에서는 현재 세션 (docs/decisions/0012).
+import "go:github.com/charmbracelet/bubbletea"
+import "go:github.com/charmbracelet/lipgloss"
+import "go:github.com/charmbracelet/x/ansi"
+
+import "model"
+import "session"
+
+/// 열려 있는 제목 입력창
+pub struct RenameInput {
+  pub path: string,
+  pub original: string,
+  pub input: string,
+}
+
+impl App {
+  /// 입력창을 연다. 기존 제목을 채워 두어 고쳐 쓰기 쉽게 한다.
+  pub fn ask_rename(self: mut Ref<Self>, s: model.Session) {
+    if s.path == "" { return }
+    self.renaming = Some(RenameInput { path: s.path, original: s.title, input: s.title })
+  }
+
+  pub fn on_rename_key(
+    self: mut Ref<Self>,
+    r: RenameInput,
+    key: tea.KeyMsg,
+    k: string,
+  ) {
+    let mut next = r
+    match k {
+      "esc" => {
+        self.renaming = None
+        self.status = "제목 변경 취소"
+        return
+      },
+      "enter" => {
+        self.renaming = None
+        self.apply_rename(r)
+        return
+      },
+      "backspace" => next.input = backspace(next.input),
+      "ctrl+u" => next.input = "",
+      _ => {
+        let Some(s) = typed(key) else {
+          return
+        }
+        next.input += s
+      },
+    }
+    self.renaming = Some(next)
+  }
+
+  fn apply_rename(self: mut Ref<Self>, r: RenameInput) {
+    let title = session.clean_title(r.input)
+    if title == "" {
+      self.status = "제목이 비어 있어 바꾸지 않았습니다"
+      return
+    }
+    if title == r.original {
+      self.status = "제목이 그대로입니다"
+      return
+    }
+    match session.rename_session(self.opts.root, r.path, title) {
+      Ok(saved) => {
+        // 목록 메타와 열린 대화를 파일에서 다시 읽는다 (모니터링 이벤트와 같은 경로)
+        self.on_files([r.path])
+        if self.has_conv && self.current.path == r.path {
+          if let Ok(s) = session.load_meta(r.path) { self.current = s }
+        }
+        self.status = f"제목 변경: {saved}"
+      },
+      Err(e) => self.status = f"제목 변경 실패: {e}",
+    }
+  }
+
+  pub fn view_rename(self: Ref<Self>, r: RenameInput) -> string {
+    let w = max(min(self.width - 8, 72), 16)
+    let mut input = r.input + "▏"
+    // 긴 입력은 끝부분(커서 쪽)을 보여준다
+    let over_by = ansi.StringWidth(input) - (w - 2)
+    if over_by > 0 { input = "…" + ansi.TruncateLeft(input, over_by + 1, "") }
+    let lines = [
+      st_title().Render("세션 제목 변경"),
+      st_faint().Render(clip("현재: " + r.original, w)),
+      "",
+      st_user().Render("›") + " " + input,
+      "",
+      st_faint().Render(clip("enter 저장 · esc 취소 · ctrl+u 모두 지우기", w)),
+    ]
+    let box = st_box().Width(w + 2).Render(lines.join("\n"))
+    lipgloss.Place(self.width, self.height, lipgloss.Center, lipgloss.Center, box)
+  }
+}

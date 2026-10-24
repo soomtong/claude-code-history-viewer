@@ -28,6 +28,61 @@ fn is_symlink(info: fs.FileInfo) -> bool {
   info.Mode() & fs.ModeSymlink != 0
 }
 
+/// 검증을 통과한 세션 파일 경로: `<root>/<project>/<id>.jsonl`
+pub struct SessionPath {
+  pub clean: string,
+  pub proj_dir: string,
+  pub project: string,
+  pub id: string,
+  pub mod_time: time.Time,
+}
+
+/// 세션 파일 화이트리스트 검증 (삭제와 제목 변경이 함께 쓴다).
+/// 절대 경로, `..` 없음, uuid 이름, projects 바로 아래 프로젝트, 심볼릭 링크 아님, 실경로 일치.
+pub fn check_session_path(root: string, path: string) -> Result<SessionPath, error> {
+  if !filepath.IsAbs(path) || !filepath.IsAbs(root) {
+    return Err(errors.New("절대 경로가 아닙니다"))
+  }
+  if path.contains("/../") || path.ends_with("/..") {
+    return Err(errors.New("경로에 .. 이 있습니다"))
+  }
+  let clean_root = filepath.Clean(root)
+  let clean = filepath.Clean(path)
+  let name = filepath.Base(clean)
+  if !is_session_file(name) {
+    return Err(errors.New(f"세션 파일 이름이 아닙니다: {name}"))
+  }
+  let proj_dir = filepath.Dir(clean)
+  let project = filepath.Base(proj_dir)
+  if filepath.Dir(proj_dir) != clean_root {
+    return Err(errors.New("projects/<프로젝트>/<세션>.jsonl 위치가 아닙니다"))
+  }
+  if project == "." || project == ".." || project == "memory" || project.starts_with(
+    ".",
+  ) {
+    return Err(errors.New(f"허용되지 않는 프로젝트 디렉터리: {project}"))
+  }
+  let info = os.Lstat(clean)?
+  if is_symlink(info) { return Err(errors.New("심볼릭 링크는 다루지 않습니다")) }
+  if !info.Mode().IsRegular() { return Err(errors.New("일반 파일이 아닙니다")) }
+  // 실경로가 projects 하위의 같은 위치인지 재확인 (상위 디렉터리 심링크 차단)
+  let real_root = filepath.EvalSymlinks(clean_root)?
+  let real = filepath.EvalSymlinks(clean)?
+  let expected = filepath.Join(real_root, project, name)
+  if filepath.Clean(real) != expected {
+    return Err(errors.New("실경로가 projects 하위가 아닙니다"))
+  }
+  Ok(
+    SessionPath {
+      clean,
+      proj_dir,
+      project,
+      id: strings.TrimSuffix(name, ".jsonl"),
+      mod_time: info.ModTime(),
+    },
+  )
+}
+
 /// 경로를 검증하고 삭제 계획을 만든다. 검증 실패는 Err, 정책상 차단은 blocked 로 돌려준다.
 /// - root: projects 디렉터리, trash_root: 휴지통 기준(`~/.Trash/cci`)
 /// - open_id: 현재 열람 중인 세션 id ("" 이면 없음)
@@ -39,39 +94,11 @@ pub fn plan_delete(
   trash_root: string,
   now: time.Time,
 ) -> Result<DeletePlan, error> {
-  if !filepath.IsAbs(path) || !filepath.IsAbs(root) {
-    return fail("절대 경로가 아닙니다")
-  }
-  if path.contains("/../") || path.ends_with("/..") {
-    return fail("경로에 .. 이 있습니다")
-  }
-  let clean_root = filepath.Clean(root)
-  let clean = filepath.Clean(path)
-  let name = filepath.Base(clean)
-  if !is_session_file(name) {
-    return fail(f"세션 파일 이름이 아닙니다: {name}")
-  }
-  let proj_dir = filepath.Dir(clean)
-  let project = filepath.Base(proj_dir)
-  if filepath.Dir(proj_dir) != clean_root {
-    return fail("projects/<프로젝트>/<세션>.jsonl 위치가 아닙니다")
-  }
-  if project == "." || project == ".." || project == "memory" || project.starts_with(
-    ".",
-  ) {
-    return fail(f"허용되지 않는 프로젝트 디렉터리: {project}")
-  }
-  let info = os.Lstat(clean)?
-  if is_symlink(info) { return fail("심볼릭 링크는 삭제하지 않습니다") }
-  if !info.Mode().IsRegular() { return fail("일반 파일이 아닙니다") }
-  // 실경로가 projects 하위의 같은 위치인지 재확인 (상위 디렉터리 심링크 차단)
-  let real_root = filepath.EvalSymlinks(clean_root)?
-  let real = filepath.EvalSymlinks(clean)?
-  let expected = filepath.Join(real_root, project, name)
-  if filepath.Clean(real) != expected {
-    return fail("실경로가 projects 하위가 아닙니다")
-  }
-  let id = strings.TrimSuffix(name, ".jsonl")
+  let sp = check_session_path(root, path)?
+  let clean = sp.clean
+  let proj_dir = sp.proj_dir
+  let project = sp.project
+  let id = sp.id
   let mut items = [clean]
   let sub = filepath.Join(proj_dir, id)
   if let Ok(si) = os.Lstat(sub) {
@@ -88,7 +115,7 @@ pub fn plan_delete(
     items = items.append(released)
   }
   let mut blocked: Option<string> = None
-  let age = now.Sub(info.ModTime())
+  let age = now.Sub(sp.mod_time)
   if age < (RECENT_SECS as time.Duration) * time.Second {
     blocked = Some(
       f"최근 {RECENT_SECS}초 안에 수정된 세션입니다(실행 중일 수 있음)",
