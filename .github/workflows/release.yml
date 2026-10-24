@@ -1,0 +1,52 @@
+# v* 태그 push 시 scripts/release.sh --publish 실행 (docs/decisions/0009-release.md)
+# 필요한 시크릿: HOMEBREW_TAP_TOKEN (soomtong/homebrew-tap 에 contents 쓰기 권한)
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  LISETTE_VERSION: 0.12.4
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Cache lis
+        id: lis-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/lis
+          key: lis-${{ runner.os }}-${{ env.LISETTE_VERSION }}
+
+      - name: Install lis
+        if: steps.lis-cache.outputs.cache-hit != 'true'
+        run: cargo install lisette --version "$LISETTE_VERSION" --locked
+
+      - name: Check tag matches VERSION
+        run: |
+          version=$(sed -n 's/^const VERSION = "\(.*\)"$/\1/p' src/main.lis)
+          [[ "v$version" == "$GITHUB_REF_NAME" ]] || {
+            echo "태그 $GITHUB_REF_NAME 와 src/main.lis VERSION $version 이 다름" >&2
+            exit 1
+          }
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAP: https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/soomtong/homebrew-tap.git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          scripts/release.sh --publish
