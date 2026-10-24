@@ -46,26 +46,25 @@ impl App {
     self.vp.SetYOffset(self.matches[pick])
   }
 
-  pub fn on_search_key(self: mut Ref<Self>, key: tea.KeyMsg, k: string) {
+  pub fn on_search_key(
+    self: mut Ref<Self>,
+    key: tea.KeyMsg,
+    k: string,
+  ) -> Option<tea.Cmd> {
     match k {
       "esc" => {
         self.search = ""
         self.search_editing = false
         self.matches = []
-        return
       },
-      "enter" => {
-        self.search_editing = false
-        return
-      },
-      "backspace" => self.search = backspace(self.search),
-      _ => {
-        let Some(s) = typed(key) else {
-          return
-        }
-        self.search += s
-      },
+      "enter" => self.search_editing = false,
+      _ => return Some(self.feed_input(key)),
     }
+    None
+  }
+
+  /// 검색어가 바뀌면 매치를 다시 찾고 첫 매치로 간다
+  pub fn search_changed(self: mut Ref<Self>) {
     self.update_matches()
     self.jump_match(1, true)
     self.ensure_rendered()
@@ -73,12 +72,16 @@ impl App {
 
   pub fn search_status(self: Ref<Self>) -> string {
     if !self.search_editing && self.search == "" { return "" }
-    let cursor = if self.search_editing { "▏" } else { "" }
     let count = if self.matches.is_empty() {
       "매치 없음"
     } else {
       f"{self.match_idx + 1}/{self.matches.length()}"
     }
-    f"/{self.search}{cursor}  [{count}]"
+    let query = if self.search_editing {
+      self.input_line(self.search, max(self.width / 3, 12))
+    } else {
+      self.search
+    }
+    f"/{query}  [{count}]"
   }
 }

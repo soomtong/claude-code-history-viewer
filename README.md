@@ -72,9 +72,25 @@ cci --no-color    # 색 끄기 (NO_COLOR, TERM=dumb 도 자동으로 끔)
 | `esc` | 검색 중이면 검색 해제, 아니면 목록으로 |
 | `q` | 종료 |
 
+### 입력창 편집 키
+
+제목 변경, 목록 필터, 대화 검색 입력창은 같은 편집 키를 쓴다 (readline/emacs 관례, bubbles textinput).
+
+| 키 | 동작 |
+| --- | --- |
+| `←` `→` / `ctrl+b` `ctrl+f` | 한 글자 이동 |
+| `alt+←` `alt+→` `ctrl+←` `ctrl+→` / `alt+b` `alt+f` | 단어 이동 |
+| `home` `end` / `ctrl+a` `ctrl+e` | 처음 / 끝 |
+| `backspace` `ctrl+h` / `delete` `ctrl+d` | 앞 / 뒤 글자 지우기 |
+| `ctrl+w` `alt+backspace` / `alt+d` | 앞 / 뒤 단어 지우기 |
+| `ctrl+u` / `ctrl+k` | 커서 앞 / 뒤 전부 지우기 |
+| `ctrl+v` | 클립보드 붙여넣기 (터미널 붙여넣기도 됨, 줄바꿈과 탭은 공백) |
+
+tmux 의 prefix 가 `ctrl+a` 면 `home` 을 쓴다. macOS 터미널에서 `alt` 키는 Option 을 Meta 로 쓰는 설정이 필요하다.
+
 ### 제목 변경 입력창
 
-`R`(shift+r) 로 기존 제목이 채워진 입력창이 열린다. `enter` 저장, `esc` 취소, `ctrl+u` 모두 지우기.
+`R`(shift+r) 로 기존 제목이 채워진 입력창이 열린다. `enter` 저장, `esc` 취소. 편집 키는 위 표와 같다.
 Claude Code 의 `/rename` 과 같은 방식으로 세션 jsonl 끝에 `custom-title` 줄을 덧붙이므로 `claude --resume` 목록에도 반영된다.
 줄바꿈은 공백으로 바뀌고 200자까지 저장한다. 파일이 바뀌므로 목록에서는 맨 위(오늘)로 올라간다.
 

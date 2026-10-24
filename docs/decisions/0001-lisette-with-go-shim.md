@@ -18,6 +18,7 @@ Lisette 에서 직접 사용 가능함을 확인했다. bubbles 컴포넌트(vie
   - `Key(name)`, `WindowSize(w, h)`: 헤드리스 테스트에서 `tea.KeyMsg`/`tea.WindowSizeMsg` 를 만드는 헬퍼.
     Lisette 에서 Go 구조체 리터럴(`tea.KeyMsg{...}`)을 직접 만들 필요를 없앤다.
 - 세션 목록과 필터 입력은 shim 없이 Lisette 로 직접 구현한다(bubbles/list, textinput 미사용).
+  입력의 편집 키맵은 이후 0013 에서 shim 의 `TextInput`(bubbles textinput)으로 바꿨다. 목록은 그대로 직접 구현.
 
 ## 확인한 Lisette 제약과 대응
 

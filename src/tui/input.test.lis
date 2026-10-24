@@ -1,0 +1,95 @@
+import "go:github.com/charmbracelet/x/ansi"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
+import "go:os"
+
+#[test("input_view: 커서 자리에 ▏, 넘치면 커서가 보이게 자른다")]
+fn input_view_window() {
+  assert input_view("", 0, 20) == "▏"
+  assert input_view("hello", 5, 20) == "hello▏"
+  assert input_view("hello", 0, 20) == "▏hello"
+  assert input_view("hello", 2, 20) == "he▏llo"
+  // 범위 밖 위치는 끝으로 맞춘다
+  assert input_view("hello", 99, 20) == "hello▏"
+  // 끝에 커서: 앞부분을 … 로 줄인다
+  let tail = input_view("abcdefghijklmnopqrstuvwxyz", 26, 10)
+  assert ansi.StringWidth(tail) <= 10
+  assert tail.starts_with("…")
+  assert tail.ends_with("z▏")
+  // 앞에 커서: 뒷부분을 … 로 줄인다
+  let head = input_view("abcdefghijklmnopqrstuvwxyz", 0, 10)
+  assert ansi.StringWidth(head) <= 10
+  assert head.starts_with("▏abc")
+  assert head.ends_with("…")
+  // 가운데 커서: 양쪽을 줄여도 커서 앞뒤 글자가 보인다
+  let mid = input_view("abcdefghijklmnopqrstuvwxyz", 13, 12)
+  assert ansi.StringWidth(mid) <= 12
+  assert mid.contains("m▏n")
+  // 한글(2칸 폭)도 폭 안에 들어간다
+  let ko = input_view("가나다라마바사아자차카타파하", 7, 11)
+  assert ansi.StringWidth(ko) <= 11
+  assert ko.contains("사▏아")
+}
+
+#[test("제목 입력: ctrl+a/e 이동, ctrl+k/w 지우기, alt+b 단어 이동")]
+fn rename_keymap() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  press(&app, ["R", "ctrl+u", "world"])
+  press(&app, ["ctrl+a", "hello "])
+  let Some(r) = app.renaming else {
+    assert false
+    return
+  }
+  assert r.input == "hello world"
+  // 커서는 "hello " 뒤
+  assert ansi.Strip(app.View()).contains("hello ▏world")
+  press(&app, ["ctrl+k"])
+  assert app.renaming.map_or("", |x| x.input) == "hello "
+  press(&app, ["ctrl+e", "big world", "alt+b", "ctrl+w"])
+  assert app.renaming.map_or("", |x| x.input) == "hello world"
+  press(&app, ["ctrl+a", "delete", "ctrl+d"])
+  assert app.renaming.map_or("", |x| x.input) == "llo world"
+  press(&app, ["esc"])
+  assert app.renaming.is_none()
+}
+
+#[test("필터 입력: 커서 이동과 지우기, 다시 열면 기존 필터를 이어 편집")]
+fn filter_keymap() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  press(&app, ["/", "rett", "left", "left", "ctrl+h", "g"])
+  assert app.filter == "rgtt"
+  press(&app, ["ctrl+a", "delete", "ctrl+e", "backspace", "enter"])
+  assert !app.filter_editing
+  assert app.filter == "gt"
+  press(&app, ["/", "ctrl+w", "greet"])
+  assert app.filter == "greet"
+  assert app.rows.length() == 1
+  press(&app, ["esc"])
+  assert app.filter == ""
+}
+
+#[test("검색 입력: 붙여넣은 줄바꿈과 탭은 공백이 된다")]
+fn search_paste() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(80, 10))
+  press(&app, ["enter", "/"])
+  let _ = app.Update(shim.Paste("greet\nfunc\tion"))
+  assert app.search == "greet func ion"
+  press(&app, ["ctrl+u", "greet"])
+  assert app.search == "greet"
+  assert !app.matches.is_empty()
+  assert ansi.Strip(app.View()).contains("/greet▏")
+}
