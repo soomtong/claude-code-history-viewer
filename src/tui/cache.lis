@@ -18,23 +18,45 @@ pub fn needs_markdown(m: model.Message) -> bool {
   m.role == model.Role.Assistant && m.has_text()
 }
 
-/// 렌더된 조각들로 메시지-줄 매핑을 만든다. 메시지 사이에는 빈 줄 하나.
+/// 렌더된 조각들로 메시지-줄 매핑을 만든다. 메시지 사이에는 빈 줄 하나,
+/// tight 인 조각(도구 결과만 있는 메시지)은 앞 조각에 바로 붙는다.
 fn layout_spans(
   msgs: Slice<int>,
   prompts: Slice<bool>,
   pieces: Slice<string>,
   full: Slice<bool>,
+  tight: Slice<bool>,
 ) -> mut Slice<Span> {
   let mut spans = Slice.new<Span>()
   let mut line = 0
   for (k, i) in msgs.enumerate() {
+    if k > 0 && !tight[k] { line += 1 }
     let n = line_count(pieces[k])
     spans = spans.append(
       Span { msg: i, start: line, lines: n, prompt: prompts[k], full: full[k] },
     )
-    line += n + 1
+    line += n
   }
   spans
+}
+
+/// layout_spans 와 같은 규칙으로 조각을 이어 붙인다.
+fn join_pieces(pieces: Slice<string>, tight: Slice<bool>) -> string {
+  let mut parts = Slice.new<string>()
+  for (k, p) in pieces.enumerate() {
+    if k > 0 {
+      let gap = if tight[k] { "\n" } else { "\n\n" }
+      parts = parts.append(gap)
+    }
+    parts = parts.append(p)
+  }
+  parts.join("")
+}
+
+/// 시간 구분선이 있으면 조각 앞에 붙인다.
+fn with_divider(piece: string, label: string, width: int) -> string {
+  if label == "" { return piece }
+  divider(label, width) + "\n\n" + piece
 }
 
 fn total_lines(spans: Slice<Span>) -> int {
@@ -100,16 +122,27 @@ impl App {
     let mut prompts = Slice.new<bool>()
     let mut pieces = Slice.new<string>()
     let mut full = Slice.new<bool>()
+    let mut tight = Slice.new<bool>()
+    let mut seps = Slice.new<string>()
+    let mut prev_time = ""
     let messages = self.conv.messages
     for (i, m) in messages.enumerate() {
       if !is_visible(m, self.toggles, self.role) { continue }
       let (r, f) = self.piece(i, m, width, false)
+      let sep = if m.is_prompt && !msgs.is_empty() {
+        time_gap_label(prev_time, m.time)
+      } else {
+        ""
+      }
+      if m.time != "" { prev_time = m.time }
       msgs = msgs.append(i)
       prompts = prompts.append(m.is_prompt)
-      pieces = pieces.append(r)
+      pieces = pieces.append(with_divider(r, sep, width))
       full = full.append(f)
+      tight = tight.append(msgs.length() > 1 && attaches_to_previous(m))
+      seps = seps.append(sep)
     }
-    let mut spans = layout_spans(msgs, prompts, pieces, full)
+    let mut spans = layout_spans(msgs, prompts, pieces, full, tight)
     let mut target = target_line(spans, anchor_msg, delta, to_bottom, h, y)
     // 보이는 범위 ± 1 화면에 걸친 자리표시만 glamour 로 렌더
     let lo = target - h
@@ -118,12 +151,12 @@ impl App {
     for (k, s) in spans.enumerate() {
       if s.full || s.start + s.lines < lo || s.start > hi { continue }
       let (r, _) = self.piece(s.msg, messages[s.msg], width, true)
-      pieces[k] = r
+      pieces[k] = with_divider(r, seps[k], width)
       full[k] = true
       changed = true
     }
     if changed {
-      spans = layout_spans(msgs, prompts, pieces, full)
+      spans = layout_spans(msgs, prompts, pieces, full, tight)
       target = target_line(spans, anchor_msg, delta, to_bottom, h, y)
     }
     self.spans = spans
@@ -137,7 +170,7 @@ impl App {
       self.vp.GotoTop()
       return
     }
-    self.content = pieces.join("\n\n")
+    self.content = join_pieces(pieces, tight)
     self.plain_lines = []
     self.vp.SetContent(self.content)
     self.vp.SetYOffset(target)

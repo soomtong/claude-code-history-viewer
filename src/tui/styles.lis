@@ -1,6 +1,6 @@
 // 화면 스타일. 색은 밝은/어두운 배경용 한 쌍(AdaptiveColor)이고, 색 지원 수준은 lipgloss 가
 // 터미널과 NO_COLOR/TERM=dumb 로 판단한다 (docs/decisions/0010).
-// 색만으로 의미를 전하지 않는다: 역할/오류/diff 는 글자(▌ You, ✗, +/-)로도 구분된다.
+// 색만으로 의미를 전하지 않는다: 역할/오류/diff 는 글자(› 프롬프트, ● 응답, ✗, +/-)로도 구분된다.
 import "go:github.com/charmbracelet/lipgloss"
 import "go:github.com/muesli/termenv"
 
@@ -76,12 +76,38 @@ pub fn st_error() -> lipgloss.Style {
   fg("160", "196").Bold(true)
 }
 
-pub fn st_selected() -> lipgloss.Style {
-  lipgloss.NewStyle().Reverse(true)
-}
-
 pub fn st_status() -> lipgloss.Style {
   fg("235", "250").Background(color("254", "236"))
+}
+
+/// 상단 헤더 띠. 하단 상태줄과 같은 바탕.
+pub fn st_bar() -> lipgloss.Style {
+  st_status()
+}
+
+/// 헤더의 앱 배지. reverse 라 색이 꺼져도 띠에서 구분된다.
+pub fn st_badge() -> lipgloss.Style {
+  fg("162", "212").Bold(true).Reverse(true)
+}
+
+/// 목록에서 선택된 항목의 바탕 (표식 ┃ 와 굵은 제목이 함께 붙는다)
+pub fn st_sel_row() -> lipgloss.Style {
+  lipgloss.NewStyle().Background(color("253", "237"))
+}
+
+/// 사용자 프롬프트 블록의 바탕 (표식 › 가 함께 붙는다)
+pub fn st_prompt() -> lipgloss.Style {
+  lipgloss.NewStyle().Background(color("255", "235"))
+}
+
+/// 목록의 날짜 묶음 제목
+pub fn st_group() -> lipgloss.Style {
+  lipgloss.NewStyle().Faint(true).Bold(true)
+}
+
+/// base 바탕 위에 s 의 글자 스타일을 얹는다 (바탕이 끊기지 않게)
+pub fn over(s: lipgloss.Style, base: lipgloss.Style) -> lipgloss.Style {
+  s.Inherit(base)
 }
 
 pub fn st_modal() -> lipgloss.Style {

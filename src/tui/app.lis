@@ -1,5 +1,4 @@
 // Bubble Tea 모델. 화면: 세션 목록, 대화 뷰, 도움말, 삭제 확인 모달.
-import "go:fmt"
 import "go:github.com/atotto/clipboard"
 import "go:github.com/charmbracelet/bubbletea"
 import "go:github.com/charmbracelet/glamour"
@@ -113,7 +112,7 @@ pub fn new_app(opts: Options) -> mut App {
     trash_root,
     dirs: [],
     follow: opts.watch,
-    ..
+    ..,
   }
   if opts.open_path != "" {
     app.open_path(opts.open_path)
@@ -188,7 +187,7 @@ impl App {
     let first = self.width == 80 && self.height == 24 && self.resize_gen == 0
     self.width = w
     self.height = h
-    self.vp.SetSize(w, self.vp_height())
+    self.vp.SetSize(self.content_width(), self.vp_height())
     self.clamp_list()
     self.resize_gen += 1
     if first || !self.has_conv {
@@ -200,8 +199,9 @@ impl App {
     Some(tea.Tick(150 * time.Millisecond, |_| ResizeDone { generation }))
   }
 
+  /// 대화 화면 본문 높이: 헤더 2줄(compact 면 생략) + 하단 1줄을 뺀다
   pub fn vp_height(self: Ref<Self>) -> int {
-    let chrome = if self.opts.compact { 1 } else { 2 }
+    let chrome = if self.opts.compact { 1 } else { 3 }
     max(self.height - chrome, 1)
   }
 
@@ -260,7 +260,7 @@ impl App {
       self.apply_filter()
       return None
     }
-    let page = self.list_height()
+    let page = self.list_page()
     match k {
       "q" => {
         self.quitting = true
@@ -408,8 +408,25 @@ impl App {
 
   // ---------- 목록 ----------
 
+  /// 목록 줄 수: 헤더, 필터 줄, 하단 줄을 뺀다
   pub fn list_height(self: Ref<Self>) -> int {
     max(self.height - 3, 1)
+  }
+
+  /// 세션 항목 하나의 줄 수: 제목 + 메타 줄, 좁으면 제목만
+  fn list_per_item(self: Ref<Self>) -> int {
+    if self.compact() { 1 } else { 2 }
+  }
+
+  /// 페이지 이동 단위(항목 수)
+  fn list_page(self: Ref<Self>) -> int {
+    max(self.list_height() / self.list_per_item(), 1)
+  }
+
+  /// 현재 필터 결과의 목록 줄 배치 (날짜 묶음 포함)
+  fn list_layout(self: Ref<Self>) -> Slice<ListLine> {
+    let times = self.rows.map(|r| self.sessions[r].updated)
+    list_lines(times, self.list_per_item(), time.Now())
   }
 
   pub fn reload_list(self: mut Ref<Self>) {
@@ -455,13 +472,22 @@ impl App {
     }
   }
 
+  /// 커서를 범위 안으로, top(줄 단위)을 선택 항목이 다 보이게 맞춘다.
+  /// 항목이 묶음의 첫 항목이면 묶음 제목도 함께 보이게 한다.
   fn clamp_list(self: mut Ref<Self>) {
     let n = self.rows.length()
     if self.cursor >= n { self.cursor = n - 1 }
     if self.cursor < 0 { self.cursor = 0 }
     let h = self.list_height()
-    if self.cursor < self.top { self.top = self.cursor }
-    if self.cursor >= self.top + h { self.top = self.cursor - h + 1 }
+    let layout = self.list_layout()
+    let (first, last) = item_bounds(layout, self.cursor)
+    if first >= 0 {
+      if last >= self.top + h { self.top = last - h + 1 }
+      if first < self.top { self.top = first }
+      // 창이 항목보다 낮으면 제목 줄을 우선한다
+      if last - first + 1 > h { self.top = last - self.list_per_item() + 1 }
+    }
+    self.top = min(self.top, max(layout.length() - h, 0))
     if self.top < 0 { self.top = 0 }
   }
 
@@ -628,8 +654,9 @@ impl App {
     self.select_id(self.current.id)
   }
 
+  /// 대화 본문 폭: 오른쪽 스크롤바 1열과 그 앞 여백 1열을 뺀다
   fn content_width(self: Ref<Self>) -> int {
-    max(self.width - 1, 20)
+    max(self.width - 2, 20)
   }
 
   fn ensure_renderer(self: mut Ref<Self>, width: int) {
@@ -645,11 +672,13 @@ impl App {
       glamour.WithStandardStyle(self.opts.theme)
     }
     // glamour 는 기본이 TrueColor 라 터미널 색 지원 수준과 NO_COLOR 를 따르도록 lipgloss 판단을 넘긴다
-    self.md = glamour.NewTermRenderer(
-      style,
-      glamour.WithWordWrap(max(width - 4, 10)),
-      glamour.WithColorProfile(lipgloss.ColorProfile()),
-    ).ok()
+    self.md = glamour
+      .NewTermRenderer(
+        style,
+        glamour.WithWordWrap(max(width - 4, 10)),
+        glamour.WithColorProfile(lipgloss.ColorProfile()),
+      )
+      .ok()
     self.md_width = width
   }
 
@@ -688,39 +717,88 @@ impl App {
     let mut lines = Slice.new<string>()
     let total = self.sessions.length()
     let shown = self.rows.length()
-    let count = if shown == total { f"{total}개" } else { f"{shown}/{total}개" }
-    lines = lines.append(
-      st_title().Render("cci") +
-      st_faint().Render(
-        f" · {scope_label(self.scope)} · {count} 세션 · {self.opts.cwd}",
-      ),
-    )
+    let count = if shown == total {
+      f"{total} 세션"
+    } else {
+      f"{shown}/{total} 세션"
+    }
+    let base = st_bar()
+    let crumbs = base.Render(scope_label(self.scope)) +
+    over(st_faint(), base).Render(" › ") +
+    over(lipgloss.NewStyle().Bold(true), base).Render(self.opts.cwd)
+    lines = lines.append(header_bar(crumbs, count, self.width))
     if self.filter_editing || self.filter != "" {
       let cursor = if self.filter_editing { "▏" } else { "" }
-      lines = lines.append(f"/ {self.filter}{cursor}")
+      lines = lines.append(clip(f" / {self.filter}{cursor}", self.width - 1))
     } else {
-      lines = lines.append(st_faint().Render("  수정 시각         메시지  제목"))
+      lines = lines.append("")
     }
     let h = self.list_height()
     if shown == 0 { lines = lines.append(self.empty_hint()...) }
+    let layout = self.list_layout()
     let all_mode = self.scope != session.Scope.Cwd
-    for i in self.top..min(self.top + h, shown) {
-      let s = self.sessions[self.rows[i]]
-      let when = fmt_time(s.updated, true)
-      let counts = f"{s.msg_count}/{s.prompt_count}"
-      let mut row = fmt.Sprintf(" %-16s  %6s  %s", when, counts, s.title)
-      if all_mode && s.cwd != "" { row += st_faint().Render("  " + s.cwd) }
-      row = clip(row, self.width - 1)
-      if i == self.cursor { row = st_selected().Render(row) }
-      lines = lines.append(row)
+    let now = time.Now()
+    for k in self.top..min(self.top + h, layout.length()) {
+      lines = lines.append(self.list_line(layout[k], all_mode, now))
     }
     while lines.length() < h + 2 {
       lines = lines.append("")
     }
-    lines = lines.append(self.status_line(
-      "enter 열기 · / 필터 · D 삭제 · y resume 복사 · a 범위 · R 새로고침 · ? 도움말 · q 종료",
-    ))
+    let hints = if self.filter_editing {
+      [hint("↵", "확정"), hint("esc", "취소")]
+    } else {
+      [
+        hint("↵", "열기"),
+        hint("/", "필터"),
+        hint("D", "삭제"),
+        hint("y", "resume 복사"),
+        hint("a", "범위"),
+        hint("R", "새로고침"),
+        hint("?", "전체 키"),
+        hint("q", "종료"),
+      ]
+    }
+    let pos = if shown == 0 { "" } else { f"{self.cursor + 1}/{shown}" }
+    lines = lines.append(footer(self.status, hints, pos, self.width))
     lines.join("\n")
+  }
+
+  /// 목록 한 줄. 선택 항목은 ┃ 표식, 굵은 제목, 옅은 바탕.
+  fn list_line(
+    self: Ref<Self>,
+    l: ListLine,
+    all_mode: bool,
+    now: time.Time,
+  ) -> string {
+    match l {
+      ListLine.Gap => "",
+      ListLine.Group(label) => st_group().Render("  " + label),
+      ListLine.Item { row, part } => {
+        let s = self.sessions[self.rows[row]]
+        let sel = row == self.cursor
+        let base = if sel { st_sel_row() } else { lipgloss.NewStyle() }
+        let lead = if sel {
+          over(st_user(), base).Render("┃") + base.Render(" ")
+        } else {
+          base.Render("  ")
+        }
+        if part == 0 {
+          let title = strings.ReplaceAll(s.title, "\t", " ")
+          let st = if sel {
+            over(lipgloss.NewStyle().Bold(true), base)
+          } else {
+            base
+          }
+          let right = over(st_faint(), base).Render(
+            short_time(s.updated, now) + " ",
+          )
+          fit(lead + st.Render(title), right, self.width, base)
+        } else {
+          let meta = over(st_faint(), base).Render(session_meta(s, all_mode))
+          fit(lead + meta, "", self.width, base)
+        }
+      },
+    }
   }
 
   fn empty_hint(self: Ref<Self>) -> Slice<string> {
@@ -756,56 +834,146 @@ impl App {
     lines[..min(lines.length(), max(self.height, 1))].join("\n")
   }
 
-  fn status_line(self: Ref<Self>, hint: string) -> string {
-    let text = if self.status != "" { self.status } else { hint }
-    st_status().Render(clip(" " + text, self.width - 1))
-  }
-
   fn view_conv(self: Ref<Self>) -> string {
     let mut out = Slice.new<string>()
     if !self.opts.compact {
+      let base = st_bar()
+      let crumbs = over(st_faint(), base).Render("세션 › ") +
+      over(st_title(), base).Render(self.current.title)
+      let msgs = self.conv.messages
+      let range = msgs
+        .get(0)
+        .map_or("", |m| time_range(m.time, msgs[msgs.length() - 1].time))
+      out = out.append(header_bar(crumbs, range, self.width))
       let flags = self.flag_text()
-      let head = st_title().Render(clip(
-        self.current.title,
-        max(self.width - 30, 10),
-      )) +
-      st_faint().Render(f"  {flags}")
-      out = out.append(head)
+      let right = if flags == "" { "" } else { st_faint().Render(flags + " ") }
+      out = out.append(fit(
+        st_faint().Render(" " + self.conv_meta()),
+        right,
+        self.width,
+        lipgloss.NewStyle(),
+      ))
     }
-    out = out.append(self.vp.View())
-    let pct = (self.vp.ScrollPercent() * 100.0) as int
-    let pos = if self.spans.length() > 0 {
-      let i = self.span_at(self.vp.YOffset())
-      f"{i + 1}/{self.spans.length()} 메시지 · {pct}%"
-    } else {
-      "0 메시지"
-    }
+    out = out.append(self.body_view())
     let search = self.search_status()
-    let live = self.live_text()
-    let pos = if live != "" { f"{live} · {pos}" } else { pos }
-    let hint = if search != "" {
-      f"{search} · n/N 매치 이동 · esc 해제 · {pos}"
-    } else {
-      f"{pos} · ]/[ 메시지 · {{/}} 프롬프트 · / 검색 · t/T/c 토글 · h 목록 · ? 도움말"
-    }
-    out = out.append(self.status_line(hint))
+    let msg = if self.status != "" {
+      self.status
+    } else if search != "" && self.search_editing {
+      f"{search}  ↵ 확정 · esc 취소"
+    } else if search != "" { f"{search}  n/N 매치 · esc 해제" } else { "" }
+    let hints = [
+      hint("] [", "메시지"),
+      hint("} {", "프롬프트"),
+      hint("/", "검색"),
+      hint("t T c", "표시"),
+      hint("h", "목록"),
+      hint("?", "전체 키"),
+    ]
+    out = out.append(footer(msg, hints, self.conv_position(), self.width))
     out.join("\n")
   }
 
+  /// 본문 + 오른쪽 1열 스크롤바
+  fn body_view(self: Ref<Self>) -> string {
+    let rows = self.vp.View().split("\n")
+    let bar = self.scrollbar(rows.length())
+    let mut out = Slice.new<string>()
+    for (i, r) in rows.enumerate() {
+      out = out.append(r + " " + bar[i])
+    }
+    out.join("\n")
+  }
+
+  /// 스크롤바: 손잡이 ┃, 길 │, 프롬프트 위치 ◆. 내용이 한 화면에 들어오면 비운다.
+  fn scrollbar(self: Ref<Self>, h: int) -> Slice<string> {
+    let mut cells = Slice.new<string>()
+    let total = self.vp.TotalLineCount()
+    if total <= h {
+      for _ in 0..h {
+        cells = cells.append(" ")
+      }
+      return cells
+    }
+    let mut marks = Slice.new<bool>()
+    for _ in 0..h {
+      marks = marks.append(false)
+    }
+    for s in self.spans {
+      if s.prompt { marks[min(s.start * h / total, h - 1)] = true }
+    }
+    let len = max(h * h / total, 1)
+    // 맨 위면 0, 맨 아래면 h - len 에 닿도록 남은 칸에 비례해 놓는다
+    let start = min(self.vp.YOffset() * (h - len) / (total - h), h - len)
+    for i in 0..h {
+      let cell = if marks[i] {
+        st_user().Render("◆")
+      } else if i >= start && i < start + len {
+        "┃"
+      } else {
+        st_faint().Render("│")
+      }
+      cells = cells.append(cell)
+    }
+    cells
+  }
+
+  /// 헤더 둘째 줄: 브랜치, 폴더, 메시지/프롬프트 수
+  fn conv_meta(self: Ref<Self>) -> string {
+    let msgs = self.conv.messages
+    let prompts = msgs.filter(|m| m.is_prompt).length()
+    let count = msgs
+      .filter(|m| m.is_prompt || m.role == model.Role.Assistant)
+      .length()
+    let mut parts = Slice.new<string>()
+    if self.current.git_branch != "" {
+      parts = parts.append(self.current.git_branch)
+    }
+    if self.current.cwd != "" { parts = parts.append(self.current.cwd) }
+    parts = parts.append(f"메시지 {count}")
+    parts = parts.append(f"프롬프트 {prompts}")
+    parts.join(" · ")
+  }
+
+  /// 하단 오른쪽: 모니터링 상태와 위치
+  fn conv_position(self: Ref<Self>) -> string {
+    let mut parts = Slice.new<string>()
+    let live = self.live_text()
+    if live != "" { parts = parts.append(live) }
+    if self.spans.is_empty() {
+      parts = parts.append("메시지 0")
+      return parts.join(" · ")
+    }
+    let i = self.span_at(self.vp.YOffset())
+    let mut p = 0
+    let mut total_p = 0
+    for (k, s) in self.spans.enumerate() {
+      if !s.prompt { continue }
+      total_p += 1
+      if k <= i { p += 1 }
+    }
+    if total_p > 0 { parts = parts.append(f"프롬프트 {p}/{total_p}") }
+    parts = parts.append(f"메시지 {i + 1}/{self.spans.length()}")
+    parts = parts.append(f"{(self.vp.ScrollPercent() * 100.0) as int}%")
+    parts.join(" · ")
+  }
+
+  /// 기본과 다른 보기 설정만 나열한다
   fn flag_text(self: Ref<Self>) -> string {
     let t = self.toggles
     let mut flags = Slice.new<string>()
-    flags = flags.append(f"role:{self.role.label()}")
-    if t.tools { flags = flags.append("tools") }
+    if self.role != RoleFilter.All {
+      flags = flags.append(f"역할 {self.role.label()}")
+    }
+    if t.tools { flags = flags.append("도구") }
     if t.thinking { flags = flags.append("thinking") }
-    if t.code { flags = flags.append("code") }
-    if t.expand { flags = flags.append("expand") }
+    if t.code { flags = flags.append("코드") }
+    if t.expand { flags = flags.append("펼침") }
     if t.debug {
       flags = flags.append(
-        f"debug(unknown {self.conv.unknown_total()}, broken {self.conv.broken})",
+        f"디버그(unknown {self.conv.unknown_total()}, broken {self.conv.broken})",
       )
     }
-    flags.join(" ")
+    flags.join(" · ")
   }
 
   fn view_help(self: Ref<Self>) -> string {
@@ -819,6 +987,7 @@ impl App {
        / 검색  n/N 다음/이전 매치(검색 중) 또는 메시지
        D 현재 세션 삭제  r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  P 디버그
        F follow 토글  o 이어진 세션 열기  y resume 복사
+표식   › 프롬프트  ● 응답, 도구 호출  ⎿ 도구 결과  ✗ 오류  ✻ thinking  ◆ 스크롤바의 프롬프트 위치
 
 아무 키나 누르면 닫힙니다."
     st_box().Render(text)
@@ -851,4 +1020,14 @@ pub fn matches_session(s: model.Session, q: string) -> bool {
     "\n",
   )
   strings.ToLower(hay).contains(q)
+}
+
+/// 목록 항목 둘째 줄: 브랜치, 메시지/프롬프트 수, (전체 범위면) 폴더
+pub fn session_meta(s: model.Session, all_mode: bool) -> string {
+  let mut parts = Slice.new<string>()
+  if s.git_branch != "" { parts = parts.append(s.git_branch) }
+  parts = parts.append(f"메시지 {s.msg_count}")
+  parts = parts.append(f"프롬프트 {s.prompt_count}")
+  if all_mode && s.cwd != "" { parts = parts.append(s.cwd) }
+  parts.join(" · ")
 }

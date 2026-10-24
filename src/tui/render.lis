@@ -1,5 +1,6 @@
 // 메시지 단위 렌더링. 결과 문자열은 메시지 id + 폭 + 토글 조합으로 캐시된다 (cache.lis).
 import "go:github.com/charmbracelet/glamour"
+import "go:github.com/charmbracelet/lipgloss"
 import "go:github.com/charmbracelet/x/ansi"
 import "go:strings"
 import "go:time"
@@ -106,80 +107,201 @@ fn clip(line: string, width: int) -> string {
   ansi.Truncate(strings.ReplaceAll(line, "\t", "  "), max(width, 10), "…")
 }
 
+/// 본문은 두 칸 들여쓰기로 그리고, 블록 첫 줄의 앞 두 칸에 표식(● ✻ ⎿ ›)을 둔다.
+fn indent(text: string, n: int) -> string {
+  let pad = strings.Repeat(" ", n)
+  text.split("\n").map(|l| pad + l).join("\n")
+}
+
+/// 첫 줄 앞 두 칸을 표식으로 바꾼다. 앞이 공백이 아니면 표식을 앞에 붙인다.
+fn mark(body: string, marker: string) -> string {
+  let mut lines = body.split("\n")
+  let first = lines[0]
+  let rest = if ansi.Strip(first).starts_with("  ") {
+    ansi.TruncateLeft(first, 2, "")
+  } else {
+    first
+  }
+  lines[0] = marker + " " + rest
+  lines.join("\n")
+}
+
+/// 줄을 폭까지 base 바탕으로 채우고, 자리가 있으면 오른쪽 끝에 right(흐리게)를 둔다.
+fn fill(line: string, right: string, width: int, base: lipgloss.Style) -> string {
+  let vis = ansi.StringWidth(line)
+  let rw = ansi.StringWidth(right)
+  if right != "" && vis + 2 + rw <= width {
+    return line + base.Render(strings.Repeat(" ", width - vis - rw)) +
+    over(st_faint(), base).Render(right)
+  }
+  line + base.Render(strings.Repeat(" ", max(width - vis, 0)))
+}
+
+/// 첫 줄 오른쪽 끝에 시각을 붙인다. glamour 가 채운 뒤쪽 공백은 걷어 낸다.
+fn with_time(body: string, at: string, width: int) -> string {
+  if at == "" { return body }
+  let mut lines = body.split("\n")
+  let first = lines[0]
+  let vis = ansi.StringWidth(strings.TrimRight(ansi.Strip(first), " "))
+  if vis + 2 + ansi.StringWidth(at) > width { return body }
+  lines[0] = fill(ansi.Truncate(first, vis, ""), at, width, lipgloss.NewStyle())
+  lines.join("\n")
+}
+
+fn change_counts(c: model.CodeChange) -> (int, int) {
+  if c.edits.is_empty() {
+    return (strings.TrimRight(c.content, "\n").split("\n").length(), 0)
+  }
+  let mut adds = 0
+  let mut dels = 0
+  for e in c.edits {
+    adds += e.new_text.split("\n").length()
+    dels += e.old_text.split("\n").length()
+  }
+  (adds, dels)
+}
+
 pub fn render_code(c: model.CodeChange, width: int, expand: bool) -> string {
   let mut lines: Slice<string> = []
   if c.edits.length() > 0 {
     for (i, e) in c.edits.enumerate() {
-      if i > 0 { lines = lines.append(st_faint().Render("  ···")) }
+      if i > 0 { lines = lines.append(st_faint().Render("    ···")) }
       for l in e.old_text.split("\n") {
-        lines = lines.append(st_del().Render(clip("- " + l, width)))
+        lines = lines.append(st_del().Render(clip("  - " + l, width)))
       }
       for l in e.new_text.split("\n") {
-        lines = lines.append(st_add().Render(clip("+ " + l, width)))
+        lines = lines.append(st_add().Render(clip("  + " + l, width)))
       }
     }
   } else {
     for l in strings.TrimRight(c.content, "\n").split("\n") {
-      lines = lines.append(clip("  " + l, width))
+      lines = lines.append(clip("    " + l, width))
     }
   }
+  let (adds, dels) = change_counts(c)
+  let mut counts = st_add().Render(f"+{adds}")
+  if dels > 0 { counts += " " + st_del().Render(f"-{dels}") }
   let head = st_tool()
     .Bold(true)
-    .Render(clip(f"── {c.tool} {c.file_path}", width))
+    .Render(clip(f"● {c.tool} {c.file_path}", max(width - 14, 10))) +
+  "  " +
+  counts
   let body = fold_lines(lines, CODE_FOLD, expand)
   head + "\n" + body.join("\n")
 }
 
+/// 도구 결과는 앞 도구 호출 아래에 ⎿ 로 붙는다. 오류는 ✗.
 fn render_result(
   text: string,
   is_error: bool,
   width: int,
   expand: bool,
 ) -> string {
-  let mut lines: Slice<string> = []
-  for l in strings.TrimRight(text, "\n").split("\n") {
-    lines = lines.append(st_faint().Render(clip("  │ " + l, width)))
-  }
-  let label = if is_error {
-    st_error().Render("  ✗ tool_result (error)")
+  let src = strings.TrimRight(text, "\n")
+  let rows = if strings.TrimSpace(src) == "" {
+    ["(출력 없음)"]
   } else {
-    st_faint().Render("  ↳ tool_result")
+    src.split("\n")
   }
-  label + "\n" + fold_lines(lines, RESULT_FOLD, expand).join("\n")
+  let mut lines: Slice<string> = []
+  for (i, l) in rows.enumerate() {
+    if i > 0 {
+      lines = lines.append(st_faint().Render(clip("    " + l, width)))
+    } else if is_error {
+      lines = lines.append(
+        st_error().Render("  ✗ ") + st_faint().Render(clip(l, width - 4)),
+      )
+    } else {
+      lines = lines.append(st_faint().Render(clip("  ⎿ " + l, width)))
+    }
+  }
+  fold_lines(lines, RESULT_FOLD, expand).join("\n")
 }
 
-pub fn header(msg: model.Message, compact: bool) -> string {
-  let at = fmt_time(msg.time, false)
-  match msg.role {
-    model.Role.User => {
-      let label = if compact {
-        "U"
-      } else if msg.is_prompt { "▌ You" } else { "▌ user" }
-      st_user().Render(label) + " " + st_faint().Render(at)
-    },
-    model.Role.Assistant => {
-      let label = if compact { "A" } else { "▌ Claude" }
-      st_assistant().Render(label) + " " + st_faint().Render(at)
-    },
+/// 사용자 프롬프트: 옅은 바탕 블록, 첫 줄은 › 와 오른쪽 시각
+fn render_prompt(text: string, at: string, width: int) -> string {
+  let base = st_prompt()
+  let clean = strings.TrimSpace(strings.ReplaceAll(text, "\t", "  "))
+  let body = wrap(clean, width - 2).split("\n")
+  let mut out: Slice<string> = []
+  for (i, l) in body.enumerate() {
+    let lead = if i == 0 {
+      over(st_user(), base).Render("›")
+    } else {
+      base.Render(" ")
+    }
+    let right = if i == 0 { at } else { "" }
+    out = out.append(fill(lead + base.Render(" " + l), right, width, base))
   }
+  out.join("\n")
 }
 
 /// 마크다운 렌더러. None 이면 평문 줄바꿈으로 대신한다(지연 렌더 전 자리표시).
+/// glamour 는 왼쪽 여백 두 칸을 두므로 평문도 두 칸 들여 맞춘다.
 pub fn render_markdown(
   text: string,
   width: int,
   md: Option<Ref<glamour.TermRenderer>>,
 ) -> string {
-  md.map_or_else(
-    || wrap(text, width),
-    |r| r.Render(text).map_or_else(
-      |_| wrap(text, width),
-      |out| strings.Trim(out, "\n"),
-    ),
-  )
+  let plain = || indent(wrap(text, width - 2), 2)
+  md.map_or_else(plain, |r| r
+    .Render(text)
+    .map_or_else(|_| plain(), |out| strings.Trim(out, "\n")))
 }
 
-/// 메시지 하나를 문자열로 렌더한다 (끝 개행 없음).
+/// 프롬프트 외 블록 하나. 보이지 않으면 None.
+fn render_block(
+  b: model.Block,
+  role: model.Role,
+  width: int,
+  t: Toggles,
+  md: Option<Ref<glamour.TermRenderer>>,
+) -> Option<string> {
+  match b {
+    model.Block.Text(text) => {
+      if strings.TrimSpace(text) == "" { return None }
+      match role {
+        model.Role.Assistant => Some(mark(
+          render_markdown(text, width, md),
+          st_assistant().Render("●"),
+        )),
+        model.Role.User => Some(mark(
+          indent(wrap(text, width - 2), 2),
+          st_faint().Render("›"),
+        )),
+      }
+    },
+    model.Block.Thinking(text) => {
+      if !t.thinking { return None }
+      Some(mark(
+        st_thinking().Render(indent(wrap(text, width - 2), 2)),
+        st_thinking().Render("✻"),
+      ))
+    },
+    model.Block.ToolUse { name, summary, code } => {
+      if t.code {
+        if let Some(c) = code { return Some(render_code(c, width, t.expand)) }
+      }
+      if !t.tools { return None }
+      Some(st_tool().Render(clip(f"● {name} {summary}", width)))
+    },
+    model.Block.ToolResult { text, is_error } => {
+      if !t.tools { return None }
+      Some(render_result(text, is_error, width, t.expand))
+    },
+    model.Block.Image => Some(st_faint().Render("  [image]")),
+    model.Block.Meta(text) => {
+      if !t.debug { return None }
+      Some(st_faint().Render(wrap("  ⋯ " + text, width)))
+    },
+    model.Block.Unknown(kind) => {
+      if !t.debug { return None }
+      Some(st_faint().Render(f"  [unknown block: {kind}]"))
+    },
+  }
+}
+
+/// 메시지 하나를 문자열로 렌더한다 (끝 개행 없음). compact 면 시각을 생략한다.
 pub fn render_message(
   msg: model.Message,
   width: int,
@@ -187,54 +309,38 @@ pub fn render_message(
   compact: bool,
   md: Option<Ref<glamour.TermRenderer>>,
 ) -> string {
-  let mut parts: Slice<string> = [header(msg, compact)]
+  let at = if compact { "" } else { fmt_time(msg.time, false) }
+  let mut parts: Slice<string> = []
+  if msg.is_prompt {
+    let text = msg.text()
+    if strings.TrimSpace(text) != "" {
+      parts = parts.append(render_prompt(text, at, width))
+    }
+    for b in msg.blocks {
+      if let model.Block.Text(_) = b { continue }
+      if let Some(s) = render_block(b, msg.role, width, t, md) {
+        parts = parts.append(s)
+      }
+    }
+    if parts.is_empty() { return render_prompt("(빈 프롬프트)", at, width) }
+    return parts.join("\n")
+  }
   for b in msg.blocks {
-    match b {
-      model.Block.Text(text) => {
-        if strings.TrimSpace(text) == "" { continue }
-        let body = match msg.role {
-          model.Role.Assistant => render_markdown(text, width, md),
-          model.Role.User => wrap(text, width),
-        }
-        parts = parts.append(body)
-      },
-      model.Block.Thinking(text) => {
-        if t.thinking {
-          parts = parts.append(st_thinking().Render(wrap("✻ " + text, width)))
-        }
-      },
-      model.Block.ToolUse { name, summary, code } => {
-        if t.tools {
-          parts = parts.append(st_tool().Render(clip(
-            f"  ⚙ {name} {summary}",
-            width,
-          )))
-        }
-        if t.code {
-          if let Some(c) = code {
-            parts = parts.append(render_code(c, width, t.expand))
-          }
-        }
-      },
-      model.Block.ToolResult { text, is_error } => {
-        if t.tools {
-          parts = parts.append(render_result(text, is_error, width, t.expand))
-        }
-      },
-      model.Block.Image => parts = parts.append(st_faint().Render("  [image]")),
-      model.Block.Meta(text) => {
-        if t.debug {
-          parts = parts.append(st_faint().Render(wrap("  ⋯ " + text, width)))
-        }
-      },
-      model.Block.Unknown(kind) => {
-        if t.debug {
-          parts = parts.append(st_faint().Render(f"  [unknown block: {kind}]"))
-        }
-      },
+    if let Some(s) = render_block(b, msg.role, width, t, md) {
+      parts = parts.append(s)
     }
   }
-  parts.join("\n")
+  if parts.is_empty() { return st_faint().Render("  (빈 메시지)") }
+  let body = parts.join("\n")
+  match msg.role {
+    model.Role.Assistant => with_time(body, at, width),
+    model.Role.User => body,
+  }
+}
+
+/// 도구 결과만 담은 user 메시지는 앞 도구 호출에 빈 줄 없이 붙인다.
+pub fn attaches_to_previous(msg: model.Message) -> bool {
+  msg.role == model.Role.User && !msg.is_prompt && !msg.has_text()
 }
 
 /// 문자열의 줄 수

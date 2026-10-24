@@ -1,0 +1,121 @@
+import "go:github.com/charmbracelet/lipgloss"
+import "go:github.com/charmbracelet/x/ansi"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
+import "go:os"
+import "go:time"
+
+/// 로컬 시간대 기준 시각 (묶음/표시는 로컬 날짜로 판단한다)
+fn at(y: int, mo: int, d: int, h: int, mi: int) -> time.Time {
+  time.Date(y, mo as time.Month, d, h, mi, 0, 0, time.Local)
+}
+
+fn ts(y: int, mo: int, d: int, h: int, mi: int) -> string {
+  at(y, mo, d, h, mi).Format(time.RFC3339)
+}
+
+#[test("날짜 묶음: 오늘, 어제, 최근 7일, 월")]
+fn grouping() {
+  let now = at(2026, 10, 24, 15, 0)
+  assert group_label(ts(2026, 10, 24, 9, 0), now) == "오늘"
+  assert group_label(ts(2026, 10, 23, 23, 0), now) == "어제"
+  assert group_label(ts(2026, 10, 20, 10, 0), now) == "최근 7일"
+  assert group_label(ts(2026, 9, 2, 10, 0), now) == "2026년 9월"
+  assert group_label("", now) == "날짜 없음"
+  assert short_time(ts(2026, 10, 24, 9, 5), now) == "09:05"
+  assert short_time(ts(2026, 9, 2, 10, 0), now) == "09-02 10:00"
+  assert short_time(ts(2025, 12, 31, 10, 0), now) == "2025-12-31"
+}
+
+#[test("시간 구분선은 5분 이상 비었을 때만, 날짜가 바뀌면 날짜 포함")]
+fn time_gaps() {
+  assert time_gap_label("2026-10-24T09:00:00Z", "2026-10-24T09:04:00Z") == ""
+  assert time_gap_label("2026-10-24T09:00:00Z", "2026-10-24T09:10:00Z") != ""
+  assert time_gap_label("2026-10-20T09:00:00Z", "2026-10-24T09:00:00Z").contains(
+    "2026-10-24",
+  )
+  assert time_gap_label("", "2026-10-24T09:00:00Z") == ""
+}
+
+#[test("띠는 정확히 폭만큼, 넘치면 왼쪽부터 줄인다")]
+fn bar_width() {
+  let base = lipgloss.NewStyle()
+  assert ansi.StringWidth(fit("왼쪽", "오른쪽", 40, base)) == 40
+  let narrow = fit(
+    "아주 긴 왼쪽 내용입니다 아주 긴 왼쪽 내용입니다",
+    "1/9",
+    20,
+    base,
+  )
+  assert ansi.StringWidth(narrow) == 20
+  assert ansi.Strip(narrow).ends_with("1/9")
+  let hints = render_hints(
+    [hint("a", "하나"), hint("b", "둘"), hint("c", "셋")],
+    12,
+    base,
+  )
+  assert ansi.Strip(hints).contains("a 하나")
+  assert !ansi.Strip(hints).contains("c 셋")
+}
+
+#[test("목록 배치: 묶음 제목과 빈 줄, 항목 범위는 묶음 제목 포함")]
+fn layout() {
+  let now = at(2026, 10, 24, 15, 0)
+  let times = [
+    ts(2026, 10, 24, 9, 0),
+    ts(2026, 10, 24, 8, 0),
+    ts(2026, 10, 23, 8, 0),
+  ]
+  let lines = list_lines(times, 2, now)
+  // 오늘, 항목0 x2, 항목1 x2, 빈 줄, 어제, 항목2 x2
+  assert lines.length() == 9
+  let (f0, l0) = item_bounds(lines, 0)
+  assert f0 == 0 && l0 == 2
+  let (f1, l1) = item_bounds(lines, 1)
+  assert f1 == 3 && l1 == 4
+  let (f2, l2) = item_bounds(lines, 2)
+  assert f2 == 6 && l2 == 8
+}
+
+#[test("목록 화면: 헤더 배지, 메타 줄, 하단 위치. 커서는 낮은 창에서도 보인다")]
+fn list_view() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  let s = ansi.Strip(app.View())
+  assert s.contains(" cci ")
+  assert s.contains("feature/x · 메시지 5 · 프롬프트 2")
+  assert s.contains("1/2")
+  // 높이 4 = 목록 1줄: 아래로 내려가도 선택 항목 제목이 보인다
+  let _ = app.Update(shim.WindowSize(100, 4))
+  press(&app, ["j"])
+  let Some(sel) = app.selected() else {
+    assert false
+    return
+  }
+  assert ansi.Strip(app.View()).contains("┃ " + sel.title)
+}
+
+#[test("대화 화면: 프롬프트 ›, 응답 ●, 도구 결과는 빈 줄 없이 붙는다")]
+fn conv_timeline() {
+  let root = make_root()
+  let mut app = open_basic(root)
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let s = screen(&app)
+  assert s.contains("› Add a greet function")
+  assert s.contains("● I will add **greet** now.")
+  assert s.contains("메시지 5 · 프롬프트 2")
+  press(&app, ["t"])
+  let lines = screen(&app).split("\n")
+  let mut attached = false
+  for (i, l) in lines.enumerate() {
+    if l.contains("⎿ File created successfully") {
+      attached = i > 0 && lines[i - 1].contains("Write")
+    }
+  }
+  assert attached
+}
