@@ -155,6 +155,19 @@ pub fn time_gap_label(prev: string, cur: string) -> string {
   }
 }
 
+/// 목록의 날짜 묶음 제목. 줄 끝까지 흐린 선을 그어 묶음 경계를 보인다.
+/// 오른쪽 1칸은 항목 시각 뒤 여백과 맞춘다.
+pub fn group_header(label: string, width: int) -> string {
+  let rule = max(width - ansi.StringWidth(label) - 4, 0)
+  st_group().Render("  " + label) +
+  st_faint().Render(" " + strings.Repeat("─", rule))
+}
+
+/// 대화 헤더와 본문 사이 흐린 가로선 (본문 왼쪽 여백 1칸과 맞춘다)
+pub fn header_rule(width: int) -> string {
+  st_faint().Render(" " + strings.Repeat("─", max(width - 2, 0)))
+}
+
 /// ─── label ─── 가운데 정렬 구분선
 pub fn divider(label: string, width: int) -> string {
   let text = f" {label} "

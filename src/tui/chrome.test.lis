@@ -119,3 +119,33 @@ fn conv_timeline() {
   }
   assert attached
 }
+
+#[test("가로선: 묶음 제목 선과 헤더 아래 선은 폭을 넘지 않는다")]
+fn rules() {
+  for w in [24, 60, 100] {
+    let g = ansi.Strip(group_header("최근 7일", w))
+    assert g.starts_with("  최근 7일 ─")
+    assert ansi.StringWidth(g) == w - 1
+    let r = ansi.Strip(header_rule(w))
+    assert r.starts_with(" ─")
+    assert ansi.StringWidth(r) == w - 1
+  }
+  // 아주 좁아도 음수 반복 없이 제목만 남는다
+  assert ansi.Strip(group_header("2026년 10월", 8)) == "  2026년 10월 "
+}
+
+#[test("대화 화면: 헤더 아래 가로선, 본문 왼쪽 여백 1칸, 화면 높이 유지")]
+fn conv_frame() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(80, 20))
+  press(&app, ["enter"])
+  let lines = ansi.Strip(app.View()).split("\n")
+  assert lines.length() == 20
+  assert lines[2].starts_with(" ───")
+  assert lines[3].starts_with(" › Add a greet function")
+  assert lines.all(|l| ansi.StringWidth(l) <= 80)
+}
