@@ -193,9 +193,9 @@ impl App {
     Some(tea.Tick(150 * time.Millisecond, |_| ResizeDone { generation }))
   }
 
-  /// 대화 화면 본문 높이: 헤더 2줄(compact 면 생략) + 하단 1줄을 뺀다
+  /// 대화 화면 본문 높이: 헤더 2줄과 가로선 1줄(compact 면 생략) + 하단 1줄을 뺀다
   pub fn vp_height(self: Ref<Self>) -> int {
-    let chrome = if self.opts.compact { 1 } else { 3 }
+    let chrome = if self.opts.compact { 1 } else { 4 }
     max(self.height - chrome, 1)
   }
 
@@ -651,9 +651,9 @@ impl App {
     self.select_id(self.current.id)
   }
 
-  /// 대화 본문 폭: 오른쪽 스크롤바 1열과 그 앞 여백 1열을 뺀다
+  /// 대화 본문 폭: 왼쪽 여백 1열, 오른쪽 스크롤바 1열과 그 앞 여백 1열을 뺀다
   fn content_width(self: Ref<Self>) -> int {
-    max(self.width - 2, 20)
+    max(self.width - 3, 20)
   }
 
   fn ensure_renderer(self: mut Ref<Self>, width: int) {
@@ -771,7 +771,7 @@ impl App {
   ) -> string {
     match l {
       ListLine.Gap => "",
-      ListLine.Group(label) => st_group().Render("  " + label),
+      ListLine.Group(label) => group_header(label, self.width),
       ListLine.Item { row, part } => {
         let s = self.sessions[self.rows[row]]
         let sel = row == self.cursor
@@ -852,6 +852,7 @@ impl App {
         self.width,
         lipgloss.NewStyle(),
       ))
+      out = out.append(header_rule(self.width))
     }
     out = out.append(self.body_view())
     let search = self.search_status()
@@ -872,13 +873,13 @@ impl App {
     out.join("\n")
   }
 
-  /// 본문 + 오른쪽 1열 스크롤바
+  /// 왼쪽 여백 1칸 + 본문 + 오른쪽 1열 스크롤바
   fn body_view(self: Ref<Self>) -> string {
     let rows = self.vp.View().split("\n")
     let bar = self.scrollbar(rows.length())
     let mut out = Slice.new<string>()
     for (i, r) in rows.enumerate() {
-      out = out.append(r + " " + bar[i])
+      out = out.append(" " + r + " " + bar[i])
     }
     out.join("\n")
   }
