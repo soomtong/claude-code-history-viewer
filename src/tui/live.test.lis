@@ -144,3 +144,34 @@ fn watch_hook() {
   assert all.length() == 2
   let _ = time.Now()
 }
+
+#[test("다른 세션 파일이 바뀌어도 선택한 세션이 유지된다")]
+fn other_session_change_keeps_selection() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(live_opts(root))
+  let _ = app.Update(shim.WindowSize(80, 20))
+  press(&app, ["j"])
+  let other = filepath.Join(app.dirs[0], SID_A + ".jsonl")
+  append_line(other, user_line(7))
+  let _ = app.Update(FilesChanged { paths: [other] })
+  let Some(s) = app.selected() else {
+    assert false
+    return
+  }
+  assert s.id == SID_B
+  // 열린 대화도 그대로
+  press(&app, ["enter"])
+  let msgs = app.conv.messages.length()
+  append_line(other, user_line(8))
+  let _ = app.Update(FilesChanged { paths: [other] })
+  assert app.current.id == SID_B
+  assert app.conv.messages.length() == msgs
+  let Some(s) = app.selected() else {
+    assert false
+    return
+  }
+  assert s.id == SID_B
+}

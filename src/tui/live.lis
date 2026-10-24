@@ -35,6 +35,8 @@ impl App {
   }
 
   pub fn on_files(self: mut Ref<Self>, paths: Slice<string>) {
+    // update_meta 가 sessions 순서를 바꾸면 rows/cursor 가 다른 세션을 가리키므로 먼저 기억해 둔다
+    let keep = self.selected().map_or("", |s| s.id)
     let mut list_changed = false
     for p in paths {
       if self.has_conv && p == self.current.path { self.refresh_conv() }
@@ -46,7 +48,6 @@ impl App {
       }
     }
     if list_changed {
-      let keep = self.selected().map_or("", |s| s.id)
       session.sort_sessions(self.sessions)
       self.apply_filter()
       self.select_id(keep)
