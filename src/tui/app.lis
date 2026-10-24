@@ -82,6 +82,8 @@ pub struct App {
   trash_root: string,
   // 제목 변경 입력창
   pub renaming: Option<RenameInput>,
+  // 한 줄 입력의 편집 엔진 (제목, 필터, 검색이 함께 쓴다)
+  input: mut Ref<shim.TextInput>,
   // 모니터링
   pub dirs: Slice<string>,
   watch_hook: Option<fn(Slice<string>)>,
@@ -105,6 +107,7 @@ pub fn new_app(opts: Options) -> mut App {
     tail: session.new_tail(""),
     current: model.Session { .. },
     vp: shim.NewViewport(80, 22),
+    input: shim.NewTextInput(),
     spans: [],
     toggles: Toggles { .. },
     role: RoleFilter.All,
@@ -122,19 +125,6 @@ pub fn new_app(opts: Options) -> mut App {
     app.reload_list()
   }
   app
-}
-
-fn backspace(s: string) -> string {
-  let rs = s.runes()
-  if rs.is_empty() { return s }
-  rs[..rs.length() - 1] as string
-}
-
-/// 입력창에 넣을 수 있는 키라면 그 문자열
-fn typed(key: tea.KeyMsg) -> Option<string> {
-  if key.Type == tea.KeyRunes { return Some(key.Runes as string) }
-  if key.Type == tea.KeySpace { return Some(" ") }
-  None
 }
 
 impl App {
@@ -163,6 +153,7 @@ impl App {
       self.on_files(changed.paths)
       return (self, None)
     }
+    if self.editing() { return (self, Some(self.feed_input(msg))) }
     if self.screen == Screen.Conv {
       let cmd = self.vp.Update(msg)
       self.ensure_rendered()
@@ -237,10 +228,7 @@ impl App {
       self.on_modal_key(plan, k)
       return None
     }
-    if let Some(r) = self.renaming {
-      self.on_rename_key(r, key, k)
-      return None
-    }
+    if let Some(r) = self.renaming { return self.on_rename_key(r, key, k) }
     match self.screen {
       Screen.List => self.on_list_key(key, k),
       Screen.Conv => self.on_conv_key(key, k),
@@ -259,10 +247,7 @@ impl App {
           self.filter_editing = false
         },
         "enter" => self.filter_editing = false,
-        "backspace" => self.filter = backspace(self.filter),
-        _ => {
-          if let Some(s) = typed(key) { self.filter += s }
-        },
+        _ => return Some(self.feed_input(key)),
       }
       self.apply_filter()
       return None
@@ -285,7 +270,10 @@ impl App {
       "enter" | "l" | "right" => {
         if let Some(s) = self.selected() { self.open_session(s) }
       },
-      "/" => self.filter_editing = true,
+      "/" => {
+        self.filter_editing = true
+        self.start_input(self.filter)
+      },
       "esc" => {
         self.filter = ""
         self.apply_filter()
@@ -318,10 +306,7 @@ impl App {
     key: tea.KeyMsg,
     k: string,
   ) -> Option<tea.Cmd> {
-    if self.search_editing {
-      self.on_search_key(key, k)
-      return None
-    }
+    if self.search_editing { return self.on_search_key(key, k) }
     match k {
       "q" => {
         self.quitting = true
@@ -360,6 +345,7 @@ impl App {
         self.search = ""
         self.matches = []
         self.search_editing = true
+        self.start_input("")
       },
       "esc" => {
         if self.search_active() {
@@ -738,9 +724,10 @@ impl App {
     over(st_faint(), base).Render(" › ") +
     over(lipgloss.NewStyle().Bold(true), base).Render(self.opts.cwd)
     lines = lines.append(header_bar(crumbs, count, self.width))
-    if self.filter_editing || self.filter != "" {
-      let cursor = if self.filter_editing { "▏" } else { "" }
-      lines = lines.append(clip(f" / {self.filter}{cursor}", self.width - 1))
+    if self.filter_editing {
+      lines = lines.append(" / " + self.input_line(self.filter, self.width - 4))
+    } else if self.filter != "" {
+      lines = lines.append(clip(f" / {self.filter}", self.width - 1))
     } else {
       lines = lines.append("")
     }
@@ -999,6 +986,8 @@ impl App {
        / 검색  n/N 다음/이전 매치(검색 중) 또는 메시지
        D 현재 세션 삭제  R 제목 변경  r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  P 디버그
        F follow 토글  o 이어진 세션 열기  y resume 복사
+입력   ←/→ ctrl+b/f 한 글자  alt+b/f 단어  ctrl+a/e 처음/끝  ctrl+w 단어 지우기  ctrl+u/k 앞/뒤 지우기
+       ctrl+d 뒤 글자 지우기  ctrl+v 붙여넣기  (제목 변경, 필터, 검색 공통)
 표식   › 프롬프트  ● 응답, 도구 호출  ⎿ 도구 결과  ✗ 오류  ✻ thinking  ◆ 스크롤바의 프롬프트 위치
 
 아무 키나 누르면 닫힙니다."

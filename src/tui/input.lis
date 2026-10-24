@@ -1,0 +1,61 @@
+// 한 줄 입력(제목 변경, 목록 필터, 대화 검색)의 공용 부분 (docs/decisions/0013).
+// 편집 키맵은 bubbles textinput(shim.TextInput)이 맡고, 화면은 여기서 ▏ 커서로 그린다.
+// 세 입력은 동시에 열리지 않으므로 App.input 하나를 함께 쓴다.
+import "go:github.com/charmbracelet/bubbletea"
+import "go:github.com/charmbracelet/x/ansi"
+
+/// value 의 pos(룬) 자리에 ▏ 커서를 넣고, 폭 width 안에서 커서가 보이게 자른다.
+/// 커서 뒤는 남는 자리만큼(왼쪽이 넘치면 폭의 1/3 까지) 보이고, 왼쪽 앞부분은 … 로 줄인다.
+pub fn input_view(value: string, pos: int, width: int) -> string {
+  let rs = value.runes()
+  let p = min(max(pos, 0), rs.length())
+  let mut left = rs[..p] as string
+  let mut right = rs[p..] as string
+  let room = max(width - 1, 1)
+  let lw = ansi.StringWidth(left)
+  let rw = ansi.StringWidth(right)
+  if lw + rw > room {
+    right = ansi.Truncate(right, min(rw, max(room - lw, room / 3)), "…")
+    let lroom = room - ansi.StringWidth(right)
+    if lw > lroom { left = "…" + ansi.TruncateLeft(left, lw - lroom + 1, "") }
+  }
+  left + "▏" + right
+}
+
+impl App {
+  /// 입력창이 열려 있는지
+  pub fn editing(self: Ref<Self>) -> bool {
+    self.renaming.is_some() || self.filter_editing || self.search_editing
+  }
+
+  /// 입력을 시작한다: 값을 채우고 커서를 끝에 둔다
+  pub fn start_input(self: mut Ref<Self>, value: string) {
+    self.input.Reset(value)
+  }
+
+  /// 열린 입력창에 키나 붙여넣기(ctrl+v 의 클립보드 결과) 메시지를 넘기고,
+  /// 값이 바뀌었으면 그 입력의 주인(제목, 필터, 검색)에 반영한다.
+  pub fn feed_input(self: mut Ref<Self>, msg: tea.Msg) -> tea.Cmd {
+    let cmd = self.input.Update(msg)
+    let v = self.input.Value()
+    if let Some(r) = self.renaming {
+      let mut next = r
+      next.input = v
+      self.renaming = Some(next)
+    } else if self.filter_editing {
+      if v != self.filter {
+        self.filter = v
+        self.apply_filter()
+      }
+    } else if self.search_editing && v != self.search {
+      self.search = v
+      self.search_changed()
+    }
+    cmd
+  }
+
+  /// 입력창의 현재 화면 (커서 위치는 App.input 기준)
+  pub fn input_line(self: Ref<Self>, value: string, width: int) -> string {
+    input_view(value, self.input.Position(), width)
+  }
+}
