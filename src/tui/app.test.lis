@@ -88,7 +88,7 @@ fn list_and_filter() {
   assert app.rows.length() == 2
   press(&app, ["a"])
   assert app.sessions.length() == 3
-  assert app.View().contains("전체 프로젝트")
+  assert app.View().contains("all projects")
 }
 
 #[test("대화: 열기, 메시지 점프, 뒤로")]
@@ -190,7 +190,7 @@ fn delete_modal() {
   }
   press(&app, ["D"])
   assert app.modal.is_some()
-  assert app.View().contains("정말 삭제할까요?")
+  assert app.View().contains("delete y | cancel other keys")
   press(&app, ["enter"])
   assert app.modal.is_none()
   assert os.Stat(target.path).is_ok()
@@ -279,5 +279,5 @@ fn rename_title() {
   assert app.View().contains("목록 q")
   // 새로고침은 ctrl+r
   press(&app, ["h", "ctrl+r"])
-  assert app.status.contains("새로고침")
+  assert app.status.contains("refreshed")
 }

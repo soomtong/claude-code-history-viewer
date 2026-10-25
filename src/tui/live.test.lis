@@ -115,7 +115,7 @@ fn continued_in() {
     f"{{\"type\":\"continued-in\",\"sessionId\":\"{SID_B}\",\"continuedInSessionId\":\"{next}\"}}",
   )
   let _ = app.Update(FilesChanged { paths: [app.current.path] })
-  assert app.status.contains("o 로 열기")
+  assert app.status.contains("(open o)")
   press(&app, ["o"])
   assert app.current.id == next
 }

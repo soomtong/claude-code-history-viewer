@@ -31,7 +31,7 @@ impl App {
     match k {
       "esc" => {
         self.renaming = None
-        self.status = "제목 변경 취소"
+        self.status = "rename cancelled"
       },
       "enter" => {
         self.renaming = None
@@ -45,11 +45,11 @@ impl App {
   fn apply_rename(self: mut Ref<Self>, r: RenameInput) {
     let title = session.clean_title(r.input)
     if title == "" {
-      self.status = "제목이 비어 있어 바꾸지 않았습니다"
+      self.status = "title is empty, not renamed"
       return
     }
     if title == r.original {
-      self.status = "제목이 그대로입니다"
+      self.status = "title unchanged"
       return
     }
     match session.rename_session(self.opts.root, r.path, title) {
@@ -59,9 +59,9 @@ impl App {
         if self.has_conv && self.current.path == r.path {
           if let Ok(s) = session.load_meta(r.path) { self.current = s }
         }
-        self.status = f"제목 변경: {saved}"
+        self.status = f"renamed: {saved}"
       },
-      Err(e) => self.status = f"제목 변경 실패: {e}",
+      Err(e) => self.status = f"rename failed: {e}",
     }
   }
 
@@ -74,10 +74,13 @@ impl App {
       "",
       st_user().Render("›") + " " + input,
       "",
-      st_faint().Render(clip(
-        "enter 저장 · esc 취소 · ctrl+a/e 처음/끝 · ctrl+u/k 앞/뒤 지우기",
+      modal_hints(
+        [
+          [hint("save", "enter"), hint("cancel", "esc")],
+          [hint("start/end", "^a ^e"), hint("delete before/after", "^u ^k")],
+        ],
         w,
-      )),
+      ),
     ]
     let box = st_box().Width(w + 2).Render(lines.join("\n"))
     lipgloss.Place(

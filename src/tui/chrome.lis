@@ -146,6 +146,11 @@ pub fn render_hints(
   out
 }
 
+/// 모달 안 키 안내 한 줄: 하단 힌트와 같은 표기, 바탕 없이 왼쪽 여백 없이.
+pub fn modal_hints(groups: Slice<Slice<Hint>>, width: int) -> string {
+  strings.TrimPrefix(render_hints(groups, width + 1, lipgloss.NewStyle()), " ")
+}
+
 /// 하단 줄: 상태 메시지가 있으면 힌트 대신 보여준다(잠시 뒤 사라진다, 0015).
 /// lead 는 힌트 앞에 붙는 입력 상태(검색어), right 는 위치/모니터링 같은 상태.
 pub fn footer(
