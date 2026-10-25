@@ -86,6 +86,9 @@ fn list_view() {
   let _ = app.Update(shim.WindowSize(100, 30))
   let s = ansi.Strip(app.View())
   assert s.contains(" CCi ")
+  // 현재 폴더 범위는 라벨 없이 기호와 경로만
+  assert s.contains("⌂ /work/demo-app")
+  assert !s.contains("Current folder")
   assert s.contains("feature/x · 메시지 5 · 프롬프트 2")
   assert s.contains("1/2")
   // 높이 4 = 목록 1줄: 아래로 내려가도 선택 항목 제목이 보인다
