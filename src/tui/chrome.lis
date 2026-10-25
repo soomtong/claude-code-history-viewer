@@ -28,7 +28,7 @@ fn label(text: string) -> Hint {
 }
 
 /// 헤더에서 현재 폴더 범위를 나타내는 기호 (라벨 대신, 0018)
-pub const CWD_MARK = "📂"
+pub const CWD_MARK = "⌂"
 
 /// 힌트 묶음 사이 구분
 pub const HINT_GROUP_SEP = " | "
