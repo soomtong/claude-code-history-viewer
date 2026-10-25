@@ -15,7 +15,8 @@
   - 하단 오른쪽 상태: `Prompt 1/2 · Msg 1/4 · 100%`, `● Follow`, `New 3 (G)`, 검색 `[No match]`
   - 헤더: `Session › 제목`, `All projects`, `Parent and children`
   - 대화 헤더 둘째 줄: `Messages 5 · Prompts 2`, 보기 설정 `Role user · Tools · Thinking · Code · Expanded · Debug (...)`
-  - 상태 메시지 첫 글자: `Tool calls shown`, `Refreshed: 5 sessions`, `Rename cancelled`, `Follow on: ...` 등
+  - 상태 메시지 첫 글자: `Tool calls shown`, `Refreshed: 5 sessions`, `Rename cancelled`, `Follow on: ...` 등.
+    역할 값도 대문자로 시작한다: `Role: All` / `Role: User` / `Role: Assistant`, 보기 설정 `Role User` (0.3.6)
     (명령 원문을 보여 주는 `claude --resume ...  (clipboard unavailable)` 은 그대로)
   - 창이 작을 때: `Window too small`, `Min 24x3`
 - 키 설명은 소문자로 둔다(`prompt { }`, `search /`, `save enter`, `scroll j k`). `[T]hinking` 과 `[t]ool` 처럼
