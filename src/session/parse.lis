@@ -121,6 +121,36 @@ fn attr_re() -> Ref<regexp.Regexp> {
 /// 팀원 메시지 앞에 Claude Code 가 붙이는 머리말. 표식이 같은 뜻이라 지운다.
 const TEAMMATE_PREAMBLE = "Another Claude session sent a message:"
 
+/// 다른 세션에서 온 메시지에 Claude Code 가 붙이는 안내 단락("This came from another Claude session — ...").
+/// 사람이 쓴 글이 아니므로 이 문장으로 시작하는 단락은 통째로 지운다.
+const PEER_NOTE_PREFIX = "This came from another Claude session"
+
+fn blank_line_re() -> Ref<regexp.Regexp> {
+  regexp.MustCompile(r"\n[ \t]*\n")
+}
+
+/// 팀원 메시지 본문이 프로토콜 JSON(`{"type":"idle_notification",...}`)이면 (요약, 본문)으로 풀어 쓴다.
+/// 요약은 type(밑줄은 공백) + 상태 값(idleReason, status), 본문은 result, message, content, text, reason 중 처음 있는 글.
+/// JSON 이 아니거나 type 이 없으면 None (원문 그대로 둔다).
+fn protocol_message(body: string) -> Option<(string, string)> {
+  let t = strings.TrimSpace(body)
+  if !t.starts_with("{") { return None }
+  let mut m = Map.new<string, Unknown>()
+  if let Err(_) = json.Unmarshal(t as Slice<byte>, &m) { return None }
+  let kind = str_of(m, "type")
+  if kind == "" { return None }
+  let mut parts = [strings.ReplaceAll(kind, "_", " ")]
+  for k in ["idleReason", "status"] {
+    let v = str_of(m, k)
+    if v != "" { parts = parts.append(v) }
+  }
+  let mut text = ""
+  for k in ["result", "message", "content", "text", "reason"] {
+    if text == "" { text = str_of(m, k) }
+  }
+  Some((parts.join(" · "), strings.TrimSpace(text)))
+}
+
 /// user 텍스트에서 팀원 메시지 블록들을 떼어 낸다. 없으면 None.
 /// 남은 텍스트는 머리말 줄을 지우고 앞뒤 공백을 걷은 나머지다(사람이 쓴 글이면 프롬프트로 남긴다).
 pub fn split_teammate(text: string) -> Option<(Slice<model.Block>, string)> {
@@ -140,15 +170,24 @@ pub fn split_teammate(text: string) -> Option<(Slice<model.Block>, string)> {
         _ => (),
       }
     }
-    blocks = blocks.append(
-      model.Block.Teammate { id, color, summary, body: strings.TrimSpace(m[2]) },
-    )
+    let mut body = strings.TrimSpace(m[2])
+    if let Some((kind, text)) = protocol_message(body) {
+      if summary == "" { summary = kind }
+      body = text
+    }
+    blocks = blocks.append(model.Block.Teammate { id, color, summary, body })
   }
+  // 남은 글: 머리말 줄과 다른 세션 안내 단락을 지운 나머지 단락들
   let mut kept = Slice.new<string>()
-  for l in re.ReplaceAllString(text, "").split("\n") {
-    if strings.TrimSpace(l) != TEAMMATE_PREAMBLE { kept = kept.append(l) }
+  for p in blank_line_re().Split(re.ReplaceAllString(text, ""), -1) {
+    let lines = p
+      .split("\n")
+      .filter(|l| strings.TrimSpace(l) != TEAMMATE_PREAMBLE)
+    let para = strings.TrimSpace(lines.join("\n"))
+    if para == "" || para.starts_with(PEER_NOTE_PREFIX) { continue }
+    kept = kept.append(para)
   }
-  Some((blocks, strings.TrimSpace(kept.join("\n"))))
+  Some((blocks, kept.join("\n\n")))
 }
 
 /// user 텍스트 하나를 블록으로: 메타, 팀원 메시지(+남은 글), 일반 글. 두 번째 값은 프롬프트로 셀 글("" 이면 없음).

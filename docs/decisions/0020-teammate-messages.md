@@ -24,6 +24,13 @@ G9 작업 완료. ...
   - 닫는 태그가 없으면 끝까지가 본문. 속성 값의 HTML 엔티티(`&quot;` 등)는 푼다. 모르는 속성은 무시.
   - 한 텍스트에 여러 개면 각각 블록. 머리말 `Another Claude session sent a message:` 줄은 지운다.
   - 태그 밖에 남은 글이 있으면 그 글만 사람 프롬프트(`Text`)로 남기고 팀원 블록은 그 뒤에 둔다.
+- 0.4.2 보강(실제 기록에서 확인):
+  - 다른 세션에서 온 메시지에 붙는 안내 단락 `This came from another Claude session — ... permission laundering.` 도
+    머리말로 보고 단락째 지운다(태그 앞뒤 어디에 있어도). 이 단락이 사람 프롬프트로 남아 `›` 블록이 되던 문제.
+  - 본문이 `type` 이 있는 JSON 객체(`{"type":"idle_notification","idleReason":"available","result":"..."}`)이면
+    프로토콜 알림으로 읽는다. 요약은 type(밑줄은 공백) + `idleReason`/`status` 값(`idle notification · available`),
+    본문은 `result`, `message`, `content`, `text`, `reason` 중 처음 있는 글(JSON 의 `\n` 이 실제 줄바꿈으로 풀림).
+    `summary` 속성이 있으면 그것이 우선. JSON 이 깨졌거나 type 이 없으면 원문 그대로.
 - 팀원 메시지만 있는 user 메시지는 프롬프트가 아니다: 프롬프트 수, 첫 프롬프트, `{ }` 이동, `◆` 에서 빠진다.
   `] [` 메시지 이동과 위치(`Msg i/n`)에는 들어간다.
 - 제목: custom > ai > 첫 프롬프트 > **첫 팀원 메시지 요약**(없으면 본문). 사람 프롬프트가 없는 팀원 세션용.
@@ -43,5 +50,6 @@ G9 작업 완료. ...
   태그 없으면 None, 프롬프트 수/첫 프롬프트/제목, 팀원만 있는 세션의 제목.
 - `src/tui/teammate.test.lis`: 접힌 한 줄, 요약 없음/모르는 색, 태그와 머리말이 안 보임, 빈 줄로 띄움, `e` 펼치기,
   프롬프트 칸 수, 역할 필터 User/Assistant 에서 숨김.
-- fixtures: `teammate.jsonl`(문자열/블록 형태, 백슬래시, 여러 개와 사람 글 혼합), `teammate-only.jsonl`.
+- fixtures: `teammate.jsonl`(문자열/블록 형태, 백슬래시, 여러 개와 사람 글 혼합), `teammate-only.jsonl`,
+  `teammate-protocol.jsonl`(안내 단락 + idle_notification JSON, 0.4.2).
 - tmux 110칸/60칸: 색(green), 펼치기, 좁은 폭에서 요약 줄임.

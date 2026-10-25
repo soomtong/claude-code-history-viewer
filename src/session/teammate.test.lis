@@ -76,3 +76,46 @@ fn teammate_only_title() {
   assert conv.first_prompt == ""
   assert conv.title() == "G9 보고: 7 포함 · 1 제외"
 }
+
+#[test("다른 세션 안내 단락은 지우고, 프로토콜 JSON 본문은 요약(type · 상태)과 result 글로 푼다")]
+fn protocol_and_peer_note() {
+  let conv = load("teammate-protocol.jsonl")
+  // 안내 단락은 프롬프트가 아니다: 사람 프롬프트는 첫 줄 하나뿐
+  assert conv.prompt_count == 1
+  let m = conv.messages[1]
+  assert !m.is_prompt
+  assert m.text() == ""
+  let tm = teammates(m)
+  assert tm.length() == 1
+  let model.Block.Teammate { id, summary, body, .. } = tm[0] else {
+    assert false
+    return
+  }
+  assert id == "outbox-g9"
+  assert summary == "idle notification · available"
+  // JSON 문자열의 \n 이 실제 줄바꿈으로 풀린다
+  assert body.starts_with(
+    "G9 담당 8개 문서 작업을 마치고 team-lead 에게 보고했습니다.\n\n산출물은",
+  )
+  assert !body.contains("\"type\"")
+  // 안내 단락이 태그 뒤에 와도, 사람 글과 섞여 있어도 그 단락만 지운다
+  let Some((_, rest)) = split_teammate(
+    "<teammate-message teammate_id=\"x\">{\"type\":\"shutdown_request\",\"reason\":\"done\"}</teammate-message>\n\nThis came from another Claude session — note.\n\n사람 글",
+  ) else {
+    assert false
+    return
+  }
+  assert rest == "사람 글"
+  // JSON 이 깨졌거나 type 이 없으면 원문 그대로
+  let Some((bad, _)) = split_teammate(
+    "<teammate-message teammate_id=\"y\">{\"no_type\": 1}</teammate-message>",
+  ) else {
+    assert false
+    return
+  }
+  let model.Block.Teammate { summary: s2, body: b2, .. } = bad[0] else {
+    assert false
+    return
+  }
+  assert s2 == "" && b2 == "{\"no_type\": 1}"
+}

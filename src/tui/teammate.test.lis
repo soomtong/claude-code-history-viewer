@@ -85,3 +85,35 @@ fn teammate_filter() {
 fn strings_blank(l: string) -> bool {
   ansi.Strip(l).split(" ").all(|p| p == "")
 }
+
+#[test("프로토콜 JSON 팀원 메시지: 요약은 type · 상태, 펼치면 result 글이 줄바꿈된 채로")]
+fn teammate_protocol_view() {
+  let root = os.MkdirTemp("", "cci-team-").unwrap_or("/nonexistent")
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  put(
+    "teammate-protocol.jsonl",
+    filepath.Join(
+      root,
+      session.encode_path("/work/team"),
+      "44444444-5555-4666-8777-888888888888.jsonl",
+    ),
+    time.Hour,
+  )
+  let mut app = open_team(root)
+  let s = ansi.Strip(app.View())
+  assert s.contains(
+    "⇠ outbox-g9 · idle notification · available  (+6 lines, e)",
+  )
+  assert !s.contains("This came from another Claude session")
+  assert !s.contains("{\"type\"")
+  assert ansi.Strip(app.View()).contains("Prompts 1")
+  press(&app, ["e"])
+  let open = ansi.Strip(app.View())
+  assert open.contains(
+    "   G9 담당 8개 문서 작업을 마치고 team-lead 에게 보고했습니다.",
+  )
+  assert open.contains("   산출물은 `/tmp/outbox/` 에 7개를 썼습니다.")
+  assert !open.contains("\\n")
+}
