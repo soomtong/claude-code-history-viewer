@@ -145,7 +145,7 @@ fn status_expires() {
   let _ = app.Update(StatusExpired { generation: app.status_gen })
   assert app.status == ""
   let s = screen(&app)
-  assert s.contains("move prompt { }  message [ ]  list h")
+  assert s.contains("Move prompt { }  message [ ]  list h")
   assert s.contains("[T]hinking")
   // 상태를 띄우지 않는 키는 타이머를 걸지 않는다
   let gen = app.status_gen

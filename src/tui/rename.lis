@@ -30,7 +30,7 @@ impl App {
     match k {
       "esc" => {
         self.renaming = None
-        self.status = "rename cancelled"
+        self.status = "Rename cancelled"
       },
       "enter" => {
         self.renaming = None
@@ -44,11 +44,11 @@ impl App {
   fn apply_rename(self: mut Ref<Self>, r: RenameInput) {
     let title = session.clean_title(r.input)
     if title == "" {
-      self.status = "title is empty, not renamed"
+      self.status = "Title is empty, not renamed"
       return
     }
     if title == r.original {
-      self.status = "title unchanged"
+      self.status = "Title unchanged"
       return
     }
     match session.rename_session(self.opts.root, r.path, title) {
@@ -58,9 +58,9 @@ impl App {
         if self.has_conv && self.current.path == r.path {
           if let Ok(s) = session.load_meta(r.path) { self.current = s }
         }
-        self.status = f"renamed: {saved}"
+        self.status = f"Renamed: {saved}"
       },
-      Err(e) => self.status = f"rename failed: {e}",
+      Err(e) => self.status = f"Rename failed: {e}",
     }
   }
 
