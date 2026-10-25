@@ -1,6 +1,6 @@
 [project]
 name = "claude-code-history-viewer"
-version = "0.3.3"
+version = "0.3.4"
 
 [dependencies.go]
 "github.com/charmbracelet/bubbletea" = "v1.3.10"
