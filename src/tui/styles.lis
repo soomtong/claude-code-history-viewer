@@ -126,6 +126,22 @@ pub fn st_box() -> lipgloss.Style {
     .Padding(0, 1)
 }
 
+/// 팀원 메시지 표식과 이름 색. Claude Code 가 팀원에게 주는 색 이름을 밝은/어두운 배경 쌍으로 옮긴다.
+/// 모르는 이름이면 흐리게 (0020).
+pub fn st_teammate(name: string) -> lipgloss.Style {
+  match name {
+    "red" => fg("160", "203"),
+    "orange" => fg("166", "208"),
+    "yellow" => fg("136", "220"),
+    "green" => fg("28", "42"),
+    "cyan" => fg("30", "51"),
+    "blue" => fg("26", "39"),
+    "purple" => fg("91", "141"),
+    "pink" => fg("162", "212"),
+    _ => st_faint(),
+  }
+}
+
 /// 직접 그리는 테두리(framed_box)의 선 색. st_box 테두리와 같다.
 pub fn st_border() -> lipgloss.Style {
   fg("26", "39")

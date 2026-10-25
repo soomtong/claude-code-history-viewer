@@ -1,0 +1,78 @@
+import "model"
+
+fn teammates(m: model.Message) -> Slice<model.Block> {
+  m.blocks.filter(|b| match b {
+    model.Block.Teammate { .. } => true,
+    _ => false,
+  })
+}
+
+#[test("split_teammate: 속성, 본문, 머리말 제거, 백슬래시와 닫는 태그 없는 형태")]
+fn split_forms() {
+  let plain = "Another Claude session sent a message:\n<teammate-message teammate_id=\"g9\" color=\"green\" summary=\"G9 보고\">\n본문\n</teammate-message>"
+  let Some((bs, rest)) = split_teammate(plain) else {
+    assert false
+    return
+  }
+  assert rest == ""
+  assert bs.length() == 1
+  let model.Block.Teammate { id, color, summary, body } = bs[0] else {
+    assert false
+    return
+  }
+  assert id == "g9" && color == "green" && summary == "G9 보고" &&
+  body == "본문"
+  // 백슬래시가 붙고 닫는 태그가 없으면 끝까지가 본문, 속성의 HTML 엔티티는 풀린다
+  let Some((bs2, _)) = split_teammate(
+    "<\\teammate-message teammate_id=\"g5\" summary=\"&quot;q&quot; ok\">첫 줄\n둘째 줄",
+  ) else {
+    assert false
+    return
+  }
+  let model.Block.Teammate { summary: s2, body: b2, .. } = bs2[0] else {
+    assert false
+    return
+  }
+  assert s2 == "\"q\" ok"
+  assert b2 == "첫 줄\n둘째 줄"
+  // 닫는 태그에 백슬래시가 붙은 형태도 닫힌다
+  let Some((bs3, rest3)) = split_teammate(
+    "<teammate-message teammate_id=\"x\">a<\\/teammate-message> 뒤 글",
+  ) else {
+    assert false
+    return
+  }
+  assert bs3.length() == 1
+  assert rest3 == "뒤 글"
+  // 태그가 없으면 None
+  assert split_teammate("그냥 프롬프트").is_none()
+  assert split_teammate("teammate-message 라는 단어만").is_none()
+}
+
+#[test("팀원 메시지는 프롬프트가 아니다: 수, 첫 프롬프트에서 빠지고 남은 사람 글만 프롬프트")]
+fn not_prompts() {
+  let conv = load("teammate.jsonl")
+  // 사람 프롬프트: "보고서를 요약해 줘", "둘 다 확인했어"
+  assert conv.prompt_count == 2
+  assert conv.first_prompt == "보고서를 요약해 줘"
+  assert conv.title() == "보고서를 요약해 줘"
+  let users = conv.messages.filter(|m| m.role == model.Role.User)
+  assert users.length() == 4
+  assert !users[0].is_prompt && !users[1].is_prompt
+  assert teammates(users[0]).length() == 1
+  assert teammates(users[1]).length() == 1
+  // 머리말과 태그는 남지 않는다
+  assert users[0].text() == ""
+  // 두 팀원 메시지 + 사람 글이 섞인 텍스트
+  assert users[3].is_prompt
+  assert users[3].text() == "둘 다 확인했어"
+  assert teammates(users[3]).length() == 2
+}
+
+#[test("사람 프롬프트가 없는 팀원 세션은 첫 팀원 메시지 요약이 제목")]
+fn teammate_only_title() {
+  let conv = load("teammate-only.jsonl")
+  assert conv.prompt_count == 0
+  assert conv.first_prompt == ""
+  assert conv.title() == "G9 보고: 7 포함 · 1 제외"
+}
