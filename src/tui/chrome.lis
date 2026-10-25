@@ -151,6 +151,81 @@ pub fn modal_hints(groups: Slice<Slice<Hint>>, width: int) -> string {
   strings.TrimPrefix(render_hints(groups, width + 1, lipgloss.NewStyle()), " ")
 }
 
+/// 둥근 테두리 상자. 제목은 위 테두리에, 키 안내와 위치(right)는 아래 테두리에 넣는다.
+/// lines 는 폭 inner 안이어야 한다. 아래 테두리에 다 들어가지 않으면 키 안내를 줄인다.
+pub fn framed_box(
+  title: string,
+  lines: Slice<string>,
+  inner: int,
+  hints: Slice<Slice<Hint>>,
+  right: string,
+) -> string {
+  let b = st_border()
+  let t = " " + title + " "
+  let tw = ansi.StringWidth(t)
+  let w = max(inner, tw + 1)
+  let mut out = [
+    b.Render("╭─") + st_title().Render(t) +
+    b.Render(strings.Repeat("─", max(w + 1 - tw, 0)) + "╮"),
+  ]
+  for l in lines {
+    let pad = spaces(w - ansi.StringWidth(l))
+    out = out.append(b.Render("│") + " " + l + pad + " " + b.Render("│"))
+  }
+  let r = if right == "" { "" } else { " " + right + " " }
+  let room = w - ansi.StringWidth(r) - 2
+  let h = modal_hints(hints, room)
+  let left = if h == "" { "" } else { " " + h + " " }
+  let fill = max(w + 1 - ansi.StringWidth(left) - ansi.StringWidth(r) - 1, 0)
+  out = out.append(
+    b.Render("╰─") + left + b.Render(strings.Repeat("─", fill)) +
+    st_faint().Render(r) +
+    b.Render("─╯"),
+  )
+  out.join("\n")
+}
+
+/// 모달: 배경 화면(bg)을 흐리게 깔고 그 위 가운데에 box 를 얹는다.
+/// 배경은 색을 벗기고 흐리게 그린다. 넓은 글자가 상자 경계에 걸리면 빈칸으로 채운다.
+pub fn overlay(bg: string, box: string, width: int, height: int) -> string {
+  let dim = st_faint()
+  let mut rows = bg.split("\n").map(ansi.Strip)
+  while rows.length() < height {
+    rows = rows.append("")
+  }
+  // 화면보다 넓은 상자는 잘라 낸다 (줄이 넘어가 화면이 밀리지 않게)
+  let lines = box.split("\n").map(|l| ansi.Truncate(l, width, ""))
+  let mut bw = 0
+  for l in lines {
+    bw = max(bw, ansi.StringWidth(l))
+  }
+  let x = max((width - bw) / 2, 0)
+  let y = max((height - lines.length()) / 2, 0)
+  let mut out = Slice.new<string>()
+  for (i, row) in rows.enumerate() {
+    if i >= height { break }
+    let k = i - y
+    if k < 0 || k >= lines.length() {
+      out = out.append(dim.Render(row))
+      continue
+    }
+    let left = ansi.Truncate(row, x, "")
+    // TruncateLeft 는 경계에 걸린 넓은 글자를 남기므로, 남는 폭을 넘으면 앞 글자를 빼고 빈칸으로 채운다
+    let want = max(ansi.StringWidth(row) - x - bw, 0)
+    let mut right = ansi.TruncateLeft(row, x + bw, "")
+    while ansi.StringWidth(right) > want {
+      right = right.runes()[1..] as string
+    }
+    let l = lines[k]
+    out = out.append(
+      dim.Render(left + spaces(x - ansi.StringWidth(left))) + l +
+      spaces(bw - ansi.StringWidth(l)) +
+      dim.Render(spaces(want - ansi.StringWidth(right)) + right),
+    )
+  }
+  out.join("\n")
+}
+
 /// 하단 줄: 상태 메시지가 있으면 힌트 대신 보여준다(잠시 뒤 사라진다, 0015).
 /// lead 는 힌트 앞에 붙는 입력 상태(검색어), right 는 위치/모니터링 같은 상태.
 pub fn footer(
