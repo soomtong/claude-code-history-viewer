@@ -190,7 +190,7 @@ fn delete_modal() {
   }
   press(&app, ["D"])
   assert app.modal.is_some()
-  assert app.View().contains("delete y | cancel other keys")
+  assert app.View().contains("Delete y | Cancel other keys")
   press(&app, ["enter"])
   assert app.modal.is_none()
   assert os.Stat(target.path).is_ok()

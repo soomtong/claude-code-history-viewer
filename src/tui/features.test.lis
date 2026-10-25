@@ -147,8 +147,12 @@ fn status_expires() {
   assert app.status != ""
   let _ = app.Update(StatusExpired { generation: app.status_gen })
   assert app.status == ""
+  // 힌트 전체 모양은 줄이지 않아도 되는 폭에서 본다
+  let _ = app.Update(shim.WindowSize(160, 200))
   let s = screen(&app)
-  assert s.contains("Move prompt { }  message [ ]  list h")
+  assert s.contains(
+    "Move prompt { }  message [ ]  session H L  list h | Search /",
+  )
   assert s.contains("[T]hinking")
   // 상태를 띄우지 않는 키는 타이머를 걸지 않는다
   let gen = app.status_gen

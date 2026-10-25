@@ -73,7 +73,7 @@ fn help_modal() {
   // 배경(헤더)이 그대로 보이고 그 위에 상자
   assert lines[0].contains("CCi")
   assert s.contains("╭─ 키 바인딩 ─")
-  assert s.contains("scroll j k | close esc")
+  assert s.contains("Scroll j k | Close esc")
   assert s.contains("1-20/")
   press(&app, ["j", "j"])
   assert app.help_top == 2
