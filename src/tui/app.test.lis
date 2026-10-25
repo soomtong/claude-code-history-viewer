@@ -88,7 +88,7 @@ fn list_and_filter() {
   assert app.rows.length() == 2
   press(&app, ["a"])
   assert app.sessions.length() == 3
-  assert app.View().contains("all projects")
+  assert app.View().contains("All projects")
 }
 
 #[test("대화: 열기, 메시지 점프, 뒤로")]
@@ -279,5 +279,5 @@ fn rename_title() {
   assert app.View().contains("목록 q")
   // 새로고침은 ctrl+r
   press(&app, ["h", "ctrl+r"])
-  assert app.status.contains("refreshed")
+  assert app.status.contains("Refreshed")
 }

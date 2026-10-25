@@ -108,7 +108,7 @@ fn conv_timeline() {
   let s = screen(&app)
   assert s.contains("› Add a greet function")
   assert s.contains("● I will add **greet** now.")
-  assert s.contains("messages 5 · prompts 2")
+  assert s.contains("Messages 5 · Prompts 2")
   press(&app, ["t"])
   let lines = screen(&app).split("\n")
   let mut attached = false

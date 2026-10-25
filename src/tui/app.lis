@@ -324,7 +324,7 @@ impl App {
         // 새로고침은 열람 중 표시도 해제한다
         self.has_conv = false
         self.reload_list()
-        self.status = f"refreshed: {self.sessions.length()} sessions"
+        self.status = f"Refreshed: {self.sessions.length()} sessions"
       },
       "a" => self.toggle_scope(),
       "y" => {
@@ -395,34 +395,34 @@ impl App {
       "o" => self.open_continued(),
       "r" => {
         self.role = self.role.next()
-        self.status = f"role: {self.role.label()}"
+        self.status = f"Role: {self.role.label()}"
         self.relayout()
       },
       "t" => {
         self.toggles.tools = !self.toggles.tools
-        self.status = on_off("tool calls", self.toggles.tools)
+        self.status = on_off("Tool calls", self.toggles.tools)
         self.relayout()
       },
       "T" => {
         self.toggles.thinking = !self.toggles.thinking
-        self.status = on_off("thinking", self.toggles.thinking)
+        self.status = on_off("Thinking", self.toggles.thinking)
         self.relayout()
       },
       "c" => {
         self.toggles.code = !self.toggles.code
-        self.status = on_off("code changes", self.toggles.code)
+        self.status = on_off("Code changes", self.toggles.code)
         self.relayout()
       },
       "e" => {
         self.toggles.expand = !self.toggles.expand
-        self.status = on_off("expand folded blocks", self.toggles.expand)
+        self.status = on_off("Expand folded blocks", self.toggles.expand)
         self.relayout()
       },
       "D" => self.ask_delete(self.current, true),
       "R" => self.ask_rename(self.current),
       "P" => {
         self.toggles.debug = !self.toggles.debug
-        self.status = on_off("debug (meta, unknown blocks)", self.toggles.debug)
+        self.status = on_off("Debug (meta, unknown blocks)", self.toggles.debug)
         self.relayout()
       },
       _ => (),
@@ -476,7 +476,7 @@ impl App {
       self.scope = session.Scope.Cwd
     }
     self.reload_list()
-    self.status = f"scope: {scope_label(self.scope)}"
+    self.status = f"Scope: {scope_label(self.scope)}"
   }
 
   pub fn apply_filter(self: mut Ref<Self>) {
@@ -533,7 +533,7 @@ impl App {
     if id == "" { return }
     let cmd = f"claude --resume {id}"
     self.status = match clipboard.WriteAll(cmd) {
-      Ok(_) => f"copied: {cmd}",
+      Ok(_) => f"Copied: {cmd}",
       Err(_) => f"{cmd}  (clipboard unavailable)",
     }
   }
@@ -553,7 +553,7 @@ impl App {
       time.Now(),
     ) {
       Ok(plan) => self.modal = Some(plan),
-      Err(e) => self.status = f"cannot delete: {e}",
+      Err(e) => self.status = f"Cannot delete: {e}",
     }
   }
 
@@ -561,7 +561,7 @@ impl App {
     self.modal = None
     // 기본은 취소. 차단되지 않았고 y 를 눌렀을 때만 실행한다.
     if k != "y" || plan.blocked.is_some() {
-      self.status = "delete cancelled"
+      self.status = "Delete cancelled"
       return
     }
     match session.execute_delete(
@@ -572,9 +572,9 @@ impl App {
     ) {
       Ok(_) => {
         self.status = if plan.purge {
-          f"deleted permanently: {plan.session_id}"
+          f"Deleted permanently: {plan.session_id}"
         } else {
-          f"moved to trash: {plan.trash_dir}"
+          f"Moved to trash: {plan.trash_dir}"
         }
         // 열람 중이던 세션을 지웠으면 목록으로 돌아간다
         if self.screen == Screen.Conv {
@@ -583,7 +583,7 @@ impl App {
           self.notify_dirs()
         }
       },
-      Err(e) => self.status = f"delete failed: {e}",
+      Err(e) => self.status = f"Delete failed: {e}",
     }
     let cursor = self.cursor
     self.reload_list()
@@ -644,7 +644,7 @@ impl App {
   fn open_path(self: mut Ref<Self>, path: string) {
     match session.load_meta(path) {
       Ok(s) => self.open_session(s),
-      Err(e) => self.status = f"open failed: {e}",
+      Err(e) => self.status = f"Open failed: {e}",
     }
   }
 
@@ -652,7 +652,7 @@ impl App {
     self.conv = session.new_conversation(false)
     self.tail = session.new_tail(s.path)
     if let Err(e) = session.feed(&self.conv, &self.tail) {
-      self.status = f"read failed: {e}"
+      self.status = f"Read failed: {e}"
       return
     }
     self.current = s
@@ -748,8 +748,14 @@ impl App {
       f"{shown}/{total} sessions"
     }
     let base = st_bar()
-    let crumbs = base.Render(scope_label(self.scope)) +
-    over(st_faint(), base).Render(" › ") +
+    // 현재 폴더 범위는 라벨 대신 기호만 둔다 (0018)
+    let scope = if self.scope == session.Scope.Cwd {
+      base.Render(CWD_MARK + " ")
+    } else {
+      base.Render(scope_label(self.scope)) +
+      over(st_faint(), base).Render(" › ")
+    }
+    let crumbs = scope +
     over(lipgloss.NewStyle().Bold(true), base).Render(self.opts.cwd)
     lines = lines.append(header_bar(
       self.opts.version,
@@ -781,7 +787,7 @@ impl App {
       [
         [hint("open", "↵"), hint("filter", "/"), hint("scope", "a")],
         [
-          label("session"),
+          label("Session"),
           hint("rename", "R"),
           hint("delete", "D"),
           hint("resume", "y"),
@@ -859,9 +865,9 @@ impl App {
   /// 창이 최소 크기보다 작을 때. 폭이 좁아도 잘리지 않게 짧은 줄로 나눈다.
   fn view_too_small(self: Ref<Self>) -> string {
     let lines = [
-      "window too small",
+      "Window too small",
       f"{self.width}x{self.height}",
-      f"min {MIN_WIDTH}x{MIN_HEIGHT}",
+      f"Min {MIN_WIDTH}x{MIN_HEIGHT}",
       "quit q",
     ]
     lines[..min(lines.length(), max(self.height, 1))].join("\n")
@@ -871,7 +877,7 @@ impl App {
     let mut out = Slice.new<string>()
     if !self.opts.compact {
       let base = st_bar()
-      let crumbs = over(st_faint(), base).Render("session › ") +
+      let crumbs = over(st_faint(), base).Render("Session › ") +
       over(st_title(), base).Render(self.current.title)
       let msgs = self.conv.messages
       let range = msgs
@@ -897,14 +903,14 @@ impl App {
     } else {
       [
         [
-          label("move"),
+          label("Move"),
           hint("prompt", "{ }"),
           hint("message", "[ ]"),
           hint("list", "h"),
         ],
         [
           hint("search", "/"),
-          label("show"),
+          label("Show"),
           mnemonic("T", "hinking"),
           mnemonic("t", "ool"),
           mnemonic("c", "ode"),
@@ -978,8 +984,8 @@ impl App {
       parts = parts.append(self.current.git_branch)
     }
     if self.current.cwd != "" { parts = parts.append(self.current.cwd) }
-    parts = parts.append(f"messages {count}")
-    parts = parts.append(f"prompts {prompts}")
+    parts = parts.append(f"Messages {count}")
+    parts = parts.append(f"Prompts {prompts}")
     parts.join(" · ")
   }
 
@@ -989,7 +995,7 @@ impl App {
     let live = self.live_text()
     if live != "" { parts = parts.append(live) }
     if self.spans.is_empty() {
-      parts = parts.append("msg 0")
+      parts = parts.append("Msg 0")
       return parts.join(" · ")
     }
     let i = self.span_at(self.vp.YOffset())
@@ -1000,8 +1006,8 @@ impl App {
       total_p += 1
       if k <= i { p += 1 }
     }
-    if total_p > 0 { parts = parts.append(f"prompt {p}/{total_p}") }
-    parts = parts.append(f"msg {i + 1}/{self.spans.length()}")
+    if total_p > 0 { parts = parts.append(f"Prompt {p}/{total_p}") }
+    parts = parts.append(f"Msg {i + 1}/{self.spans.length()}")
     parts = parts.append(f"{(self.vp.ScrollPercent() * 100.0) as int}%")
     parts.join(" · ")
   }
@@ -1011,15 +1017,15 @@ impl App {
     let t = self.toggles
     let mut flags = Slice.new<string>()
     if self.role != RoleFilter.All {
-      flags = flags.append(f"role {self.role.label()}")
+      flags = flags.append(f"Role {self.role.label()}")
     }
-    if t.tools { flags = flags.append("tools") }
-    if t.thinking { flags = flags.append("thinking") }
-    if t.code { flags = flags.append("code") }
-    if t.expand { flags = flags.append("expanded") }
+    if t.tools { flags = flags.append("Tools") }
+    if t.thinking { flags = flags.append("Thinking") }
+    if t.code { flags = flags.append("Code") }
+    if t.expand { flags = flags.append("Expanded") }
     if t.debug {
       flags = flags.append(
-        f"debug (unknown {self.conv.unknown_total()}, broken {self.conv.broken})",
+        f"Debug (unknown {self.conv.unknown_total()}, broken {self.conv.broken})",
       )
     }
     flags.join(" · ")
@@ -1032,9 +1038,9 @@ fn on_off(name: string, on: bool) -> string {
 
 pub fn scope_label(scope: session.Scope) -> string {
   match scope {
-    session.Scope.Cwd => "current folder",
-    session.Scope.Parent => "parent and children",
-    session.Scope.All => "all projects",
+    session.Scope.Cwd => "Current folder",
+    session.Scope.Parent => "Parent and children",
+    session.Scope.All => "All projects",
   }
 }
 

@@ -73,7 +73,7 @@ impl App {
   pub fn search_status(self: Ref<Self>) -> string {
     if !self.search_editing && self.search == "" { return "" }
     let count = if self.matches.is_empty() {
-      "no match"
+      "No match"
     } else {
       f"{self.match_idx + 1}/{self.matches.length()}"
     }

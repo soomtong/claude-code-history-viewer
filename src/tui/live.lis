@@ -71,7 +71,7 @@ impl App {
     let read = match session.feed(&self.conv, &self.tail) {
       Ok(r) => r,
       Err(e) => {
-        self.status = f"read failed: {e}"
+        self.status = f"Read failed: {e}"
         return
       },
     }
@@ -87,7 +87,7 @@ impl App {
     if let Some(next) = self.conv.continued_in {
       if next != self.announced_next {
         self.announced_next = next
-        self.status = f"continued in {next} (open o)"
+        self.status = f"Continued in {next} (open o)"
       }
     }
   }
@@ -97,21 +97,21 @@ impl App {
     if self.follow {
       self.relayout_with(true)
       self.new_count = 0
-      self.status = "follow on: tracking new messages"
+      self.status = "Follow on: tracking new messages"
     } else {
-      self.status = "follow off"
+      self.status = "Follow off"
     }
   }
 
   /// continued-in 으로 이어진 세션을 연다.
   pub fn open_continued(self: mut Ref<Self>) {
     let Some(next) = self.conv.continued_in else {
-      self.status = "no continued session"
+      self.status = "No continued session"
       return
     }
     match session.find_session(self.opts.root, next) {
       Some(p) => self.open_path(p),
-      None => self.status = f"continued session file not found: {next}",
+      None => self.status = f"Continued session file not found: {next}",
     }
   }
 
@@ -129,11 +129,11 @@ impl App {
     if !self.opts.watch { return "" }
     let mut parts = Slice.new<string>()
     if self.follow {
-      parts = parts.append("● follow")
+      parts = parts.append("● Follow")
     } else {
-      parts = parts.append("○ follow")
+      parts = parts.append("○ Follow")
     }
-    if self.new_count > 0 { parts = parts.append(f"new {self.new_count} (G)") }
+    if self.new_count > 0 { parts = parts.append(f"New {self.new_count} (G)") }
     parts.join(" ")
   }
 }
