@@ -50,9 +50,9 @@ impl RoleFilter {
 
   pub fn label(self) -> string {
     match self {
-      RoleFilter.All => "all",
-      RoleFilter.User => "user",
-      RoleFilter.Assistant => "assistant",
+      RoleFilter.All => "All",
+      RoleFilter.User => "User",
+      RoleFilter.Assistant => "Assistant",
     }
   }
 

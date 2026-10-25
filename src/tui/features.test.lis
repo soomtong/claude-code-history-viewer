@@ -23,6 +23,9 @@ fn role_cycle() {
   assert app.spans.length() == 4
   press(&app, ["r"])
   assert app.role == RoleFilter.User
+  // 알림 줄과 헤더 보기 설정의 역할 값은 대문자로 시작한다 (0018)
+  assert app.status == "Role: User"
+  assert screen(&app).contains("Role User")
   assert app.spans.length() == 2
   assert app.spans.all(|s| s.prompt)
   press(&app, ["r"])
