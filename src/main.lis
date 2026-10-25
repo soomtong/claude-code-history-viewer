@@ -10,7 +10,7 @@ import "session"
 import "tui"
 import "watch"
 
-const VERSION = "0.3.4"
+const VERSION = "0.3.5"
 
 const USAGE = "사용법: cci [옵션] [세션 id | 경로.jsonl]
 
