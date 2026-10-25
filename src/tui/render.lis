@@ -75,6 +75,8 @@ pub fn is_visible(msg: model.Message, t: Toggles, role: RoleFilter) -> bool {
     model.Block.ToolUse { .. } => t.tools,
     model.Block.ToolResult { .. } => t.tools,
     model.Block.Meta(_) | model.Block.Unknown(_) => t.debug,
+    // 팀원 메시지는 사람도 이 세션의 Claude 도 아니라 전체(All)에서만 보인다 (0020)
+    model.Block.Teammate { .. } => role == RoleFilter.All,
     _ => false,
   })
 }
@@ -298,7 +300,56 @@ fn render_block(
       if !t.debug { return None }
       Some(st_faint().Render(f"  [unknown block: {kind}]"))
     },
+    model.Block.Teammate { id, color, summary, body } => Some(render_teammate(
+      id,
+      color,
+      summary,
+      body,
+      width,
+      t.expand,
+    )),
   }
+}
+
+/// 시각 자리(` 15:04`)를 남기려고 머리 줄에서 비워 두는 폭
+const TIME_ROOM = 7
+
+/// 팀원 메시지 (0020): 기본은 한 줄 `⇠ 이름 · 요약  (+N lines, e)`, 펼치면(e) 아래에 본문.
+/// 표식과 이름은 메시지의 color 로 칠한다. 요약이 없으면 본문 첫 줄을 쓴다.
+fn render_teammate(
+  id: string,
+  color: string,
+  summary: string,
+  body: string,
+  width: int,
+  expand: bool,
+) -> string {
+  let c = st_teammate(color)
+  let lines = if body == "" {
+    Slice.new<string>()
+  } else {
+    wrap(body, width - 2).split("\n")
+  }
+  let title = if summary != "" {
+    summary
+  } else {
+    strings.TrimSpace(body.split("\n")[0])
+  }
+  let who = if id == "" { "teammate" } else { id }
+  let n = lines.length()
+  let unit = if n == 1 { "line" } else { "lines" }
+  let more = if expand || lines.is_empty() {
+    ""
+  } else {
+    st_faint().Render(f"  (+{n} {unit}, e)")
+  }
+  let head = c.Render("⇠") + " " + c.Bold(true).Render(who) +
+  st_faint().Render(" · ") +
+  strings.ReplaceAll(title, "\n", " ")
+  let room = max(width - ansi.StringWidth(more) - TIME_ROOM, 10)
+  let line = ansi.Truncate(head, room, "…") + more
+  if !expand || lines.is_empty() { return line }
+  line + "\n" + indent(lines.join("\n"), 2)
 }
 
 /// 메시지 하나를 문자열로 렌더한다 (끝 개행 없음). compact 면 시각을 생략한다.
@@ -332,15 +383,16 @@ pub fn render_message(
   }
   if parts.is_empty() { return st_faint().Render("  (빈 메시지)") }
   let body = parts.join("\n")
-  match msg.role {
-    model.Role.Assistant => with_time(body, at, width),
-    model.Role.User => body,
+  if msg.role == model.Role.Assistant || msg.has_teammate() {
+    return with_time(body, at, width)
   }
+  body
 }
 
 /// 도구 결과만 담은 user 메시지는 앞 도구 호출에 빈 줄 없이 붙인다.
 pub fn attaches_to_previous(msg: model.Message) -> bool {
-  msg.role == model.Role.User && !msg.is_prompt && !msg.has_text()
+  msg.role == model.Role.User && !msg.is_prompt && !msg.has_text() &&
+  !msg.has_teammate()
 }
 
 /// 문자열의 줄 수

@@ -1,0 +1,87 @@
+import "go:github.com/charmbracelet/x/ansi"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
+import "go:os"
+import "go:path/filepath"
+import "go:time"
+
+import "session"
+
+/// /work/team 에 팀원 메시지가 든 세션 하나
+fn team_root() -> string {
+  let root = os.MkdirTemp("", "cci-team-").unwrap_or("/nonexistent")
+  put(
+    "teammate.jsonl",
+    filepath.Join(
+      root,
+      session.encode_path("/work/team"),
+      "22222222-3333-4444-8555-666666666666.jsonl",
+    ),
+    time.Hour,
+  )
+  root
+}
+
+fn open_team(root: string) -> mut App {
+  let mut o = opts(root)
+  o.cwd = "/work/team"
+  let mut app = new_app(o)
+  let _ = app.Update(shim.WindowSize(120, 200))
+  press(&app, ["enter"])
+  app
+}
+
+#[test("팀원 메시지: 한 줄로 접혀 ⇠ 이름 · 요약 (+N lines, e), e 로 본문을 펼친다")]
+fn teammate_collapsed() {
+  let root = team_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = open_team(root)
+  let s = ansi.Strip(app.View())
+  assert s.contains("⇠ outbox-g9 · G9 보고: 7 포함 · 1 제외  (+5 lines, e)")
+  assert s.contains(
+    "⇠ outbox-g5 · G5 \"outbox\" 완료: 포함 6 · 제외 2  (+2 lines, e)",
+  )
+  // 요약이 없으면 본문 첫 줄, 모르는 색 이름이어도 그린다
+  assert s.contains("⇠ b2 · b2 첫 줄  (+2 lines, e)")
+  // 태그, 머리말, 본문은 접힌 동안 보이지 않는다
+  assert !s.contains("teammate-message")
+  assert !s.contains("Another Claude session")
+  assert !s.contains("G9 작업 완료")
+  // 팀원 메시지 사이는 빈 줄로 띄운다 (도구 결과처럼 앞에 붙지 않음)
+  let lines = s.split("\n")
+  for (i, l) in lines.enumerate() {
+    if l.contains("⇠ outbox-g5") { assert strings_blank(lines[i - 1]) }
+  }
+  // 펼치기
+  press(&app, ["e"])
+  let open = ansi.Strip(app.View())
+  assert open.contains("G9 작업 완료. 산출물은 /tmp/outbox/ 에 7개.")
+  assert open.contains("- 제외 DEFECT-C.md — Zig 전용.")
+  assert !open.contains("lines, e)")
+}
+
+#[test("팀원 메시지는 프롬프트 표시(◆, { })에서 빠지고 역할 필터 All 에서만 보인다")]
+fn teammate_filter() {
+  let root = team_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = open_team(root)
+  // 사람 프롬프트 2개만 프롬프트 칸
+  assert app.spans.filter(|sp| sp.prompt).length() == 2
+  assert ansi.Strip(app.View()).contains("Prompts 2")
+  press(&app, ["r"])
+  assert app.role == RoleFilter.User
+  let u = ansi.Strip(app.View())
+  assert !u.contains("outbox-g9")
+  assert !u.contains("outbox-g5")
+  assert u.contains("보고서를 요약해 줘")
+  press(&app, ["r"])
+  assert app.role == RoleFilter.Assistant
+  assert !ansi.Strip(app.View()).contains("outbox-g9")
+}
+
+fn strings_blank(l: string) -> bool {
+  ansi.Strip(l).split(" ").all(|p| p == "")
+}

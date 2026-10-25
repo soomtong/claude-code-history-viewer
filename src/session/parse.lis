@@ -1,5 +1,7 @@
 // jsonl 한 줄 단위 파서. 규칙은 docs/decisions/0002-data-model.md 참고.
 import "go:encoding/json"
+import "go:html"
+import "go:regexp"
 import "go:slices"
 import "go:strings"
 
@@ -102,6 +104,62 @@ pub fn is_meta_text(text: string) -> bool {
     if t.starts_with(f"<{tag}>") || t.starts_with(f"<{tag} ") { return true }
   }
   false
+}
+
+/// 다른 에이전트(팀원)가 보낸 메시지: `<teammate-message teammate_id=".." color=".." summary="..">본문</teammate-message>`.
+/// 붙여넣기 등으로 `<\teammate-message` 처럼 백슬래시가 붙은 형태도 받는다. 닫는 태그가 없으면 끝까지가 본문이다 (0020).
+fn teammate_re() -> Ref<regexp.Regexp> {
+  regexp.MustCompile(
+    r"(?s)<\\?teammate-message((?:\s+[\w-]+=\x22[^\x22]*\x22)*)\s*>(.*?)(?:<\\?/teammate-message>|\z)",
+  )
+}
+
+fn attr_re() -> Ref<regexp.Regexp> {
+  regexp.MustCompile(r"([\w-]+)=\x22([^\x22]*)\x22")
+}
+
+/// 팀원 메시지 앞에 Claude Code 가 붙이는 머리말. 표식이 같은 뜻이라 지운다.
+const TEAMMATE_PREAMBLE = "Another Claude session sent a message:"
+
+/// user 텍스트에서 팀원 메시지 블록들을 떼어 낸다. 없으면 None.
+/// 남은 텍스트는 머리말 줄을 지우고 앞뒤 공백을 걷은 나머지다(사람이 쓴 글이면 프롬프트로 남긴다).
+pub fn split_teammate(text: string) -> Option<(Slice<model.Block>, string)> {
+  let re = teammate_re()
+  let found = re.FindAllStringSubmatch(text, -1)
+  if found.is_empty() { return None }
+  let mut blocks = Slice.new<model.Block>()
+  for m in found {
+    let mut id = ""
+    let mut color = ""
+    let mut summary = ""
+    for a in attr_re().FindAllStringSubmatch(m[1], -1) {
+      match a[1] {
+        "teammate_id" => id = html.UnescapeString(a[2]),
+        "color" => color = a[2],
+        "summary" => summary = html.UnescapeString(a[2]),
+        _ => (),
+      }
+    }
+    blocks = blocks.append(
+      model.Block.Teammate { id, color, summary, body: strings.TrimSpace(m[2]) },
+    )
+  }
+  let mut kept = Slice.new<string>()
+  for l in re.ReplaceAllString(text, "").split("\n") {
+    if strings.TrimSpace(l) != TEAMMATE_PREAMBLE { kept = kept.append(l) }
+  }
+  Some((blocks, strings.TrimSpace(kept.join("\n"))))
+}
+
+/// user 텍스트 하나를 블록으로: 메타, 팀원 메시지(+남은 글), 일반 글. 두 번째 값은 프롬프트로 셀 글("" 이면 없음).
+fn user_text_blocks(t: string, is_meta: bool) -> (Slice<model.Block>, string) {
+  if is_meta || is_meta_text(t) { return ([model.Block.Meta(t)], "") }
+  let Some((tm, rest)) = split_teammate(t) else {
+    return ([model.Block.Text(t)], t)
+  }
+  if rest == "" { return (tm, "") }
+  let out = [model.Block.Text(rest)].append(tm...)
+  (out, rest)
 }
 
 /// 문자열을 한 줄로 접고 최대 n 룬으로 자른다.
@@ -239,6 +297,7 @@ pub struct Conversation {
   pub ai_title: Option<string>,
   pub custom_title: Option<string>,
   pub first_prompt: string,
+  pub first_teammate: string, // 첫 팀원 메시지 요약 (프롬프트가 없을 때 제목 후보)
   pub started: string,
   pub updated: string,
   pub prompt_count: int,
@@ -253,7 +312,7 @@ pub fn new_conversation(meta_only: bool) -> mut Conversation {
     meta_only,
     unknown_types: Map.new<string, int>(),
     unknown_blocks: Map.new<string, int>(),
-    ..
+    ..,
   }
 }
 
@@ -263,7 +322,7 @@ impl Conversation {
     self.prompt_count + self.assistant_ids.length()
   }
 
-  /// custom > ai > 첫 프롬프트 순서로 제목을 고른다.
+  /// custom > ai > 첫 프롬프트 > 첫 팀원 메시지 요약 순서로 제목을 고른다.
   pub fn title(self: Ref<Self>) -> string {
     if let Some(t) = self.custom_title {
       if strings.TrimSpace(t) != "" { return one_line(t, 80) }
@@ -272,6 +331,7 @@ impl Conversation {
       if strings.TrimSpace(t) != "" { return one_line(t, 80) }
     }
     if self.first_prompt != "" { return one_line(self.first_prompt, 80) }
+    if self.first_teammate != "" { return one_line(self.first_teammate, 80) }
     "(제목 없음)"
   }
 
@@ -352,24 +412,17 @@ impl Conversation {
     let mut prompt_text = ""
     match parse_content(raw) {
       Content.Plain(s) => {
-        if is_meta || is_meta_text(s) {
-          blocks = blocks.append(model.Block.Meta(s))
-        } else {
-          blocks = blocks.append(model.Block.Text(s))
-          prompt_text = s
-        }
+        let (bs, p) = user_text_blocks(s, is_meta)
+        blocks = bs
+        prompt_text = p
       },
       Content.Blocks(bs) => {
         for b in bs {
           match b.kind {
             "text" => {
-              let t = b.text.unwrap_or("")
-              if is_meta || is_meta_text(t) {
-                blocks = blocks.append(model.Block.Meta(t))
-              } else {
-                blocks = blocks.append(model.Block.Text(t))
-                if prompt_text == "" { prompt_text = t }
-              }
+              let (tbs, p) = user_text_blocks(b.text.unwrap_or(""), is_meta)
+              blocks = blocks.append(tbs...)
+              if prompt_text == "" { prompt_text = p }
             },
             "tool_result" => {
               blocks = blocks.append(
@@ -390,6 +443,15 @@ impl Conversation {
       Content.Empty => {
         return
       },
+    }
+    // 사람이 쓴 프롬프트가 없는 세션(팀원 세션)의 제목 후보: 첫 팀원 메시지 요약
+    if self.first_teammate == "" {
+      for b in blocks {
+        if let model.Block.Teammate { summary, body, .. } = b {
+          self.first_teammate = if summary != "" { summary } else { body }
+          break
+        }
+      }
     }
     let is_prompt = prompt_text != ""
     if is_prompt {

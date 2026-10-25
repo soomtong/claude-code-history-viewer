@@ -97,6 +97,7 @@ fn help_sections() -> Slice<HelpSection> {
         hk("✗", "오류"),
         hk("✻", "thinking"),
         hk("⋯", "메타"),
+        hk("⇠", "팀원 메시지 (e 로 펼침)"),
         hk("◆", "스크롤바의 프롬프트 위치"),
       ],
     },

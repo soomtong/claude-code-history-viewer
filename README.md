@@ -73,6 +73,12 @@ cci --no-color    # 색 끄기 (NO_COLOR, TERM=dumb 도 자동으로 끔)
 | `esc` | 검색 중이면 검색 해제, 아니면 목록으로 |
 | `q` | 종료 |
 
+### 팀원 메시지
+
+다른 에이전트(팀원)가 보낸 `<teammate-message teammate_id=".." color=".." summary="..">` 는 프롬프트가 아니라
+`⇠ 이름 · 요약  (+N lines, e)` 한 줄로 접혀 보인다. 표식과 이름은 팀원 색, `e` 로 본문을 펼친다.
+프롬프트 수와 `{ }` 이동, 스크롤바 `◆` 에서 빠지고, 역할 필터는 전체(All)에서만 보인다.
+
 ### 입력창 편집 키
 
 제목 변경, 목록 필터, 대화 검색 입력창은 같은 편집 키를 쓴다 (readline/emacs 관례, bubbles textinput).
