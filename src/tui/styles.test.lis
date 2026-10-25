@@ -19,15 +19,15 @@ fn too_small() {
   }
   let mut app = new_app(opts(root))
   let _ = app.Update(shim.WindowSize(MIN_WIDTH - 1, 10))
-  assert app.View().contains("창이 작습니다")
+  assert app.View().contains("window too small")
   press(&app, ["D", "enter"])
   assert app.modal.is_none()
   assert app.screen == Screen.List
   // 다시 커지면 원래 화면
   let _ = app.Update(shim.WindowSize(80, 20))
-  assert !app.View().contains("창이 작습니다")
+  assert !app.View().contains("window too small")
   let _ = app.Update(shim.WindowSize(80, MIN_HEIGHT - 1))
-  assert app.View().contains("창이 작습니다")
+  assert app.View().contains("window too small")
   press(&app, ["q"])
   assert app.quitting
 }

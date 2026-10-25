@@ -66,7 +66,7 @@ fn folding() {
   let lines = ["1", "2", "3", "4", "5"]
   let folded = fold_lines(lines, 3, false)
   assert folded.length() == 4
-  assert ansi.Strip(folded[3]).contains("2줄 더 있음")
+  assert ansi.Strip(folded[3]).contains("2 more lines (expand e)")
   assert fold_lines(lines, 3, true).length() == 5
 }
 

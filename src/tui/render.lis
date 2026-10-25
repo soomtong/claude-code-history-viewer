@@ -99,7 +99,7 @@ pub fn fold_lines(
   if expand || lines.length() <= max_lines { return lines }
   let hidden = lines.length() - max_lines
   let mut out = lines[..max_lines].clone()
-  out = out.append(st_faint().Render(f"  … {hidden}줄 더 있음 (e 로 펼치기)"))
+  out = out.append(st_faint().Render(f"  … {hidden} more lines (expand e)"))
   out
 }
 

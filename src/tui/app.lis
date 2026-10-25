@@ -318,7 +318,7 @@ impl App {
         // 새로고침은 열람 중 표시도 해제한다
         self.has_conv = false
         self.reload_list()
-        self.status = f"새로고침: {self.sessions.length()}개 세션"
+        self.status = f"refreshed: {self.sessions.length()} sessions"
       },
       "a" => self.toggle_scope(),
       "y" => {
@@ -389,12 +389,12 @@ impl App {
       "o" => self.open_continued(),
       "r" => {
         self.role = self.role.next()
-        self.status = f"역할 필터: {self.role.label()}"
+        self.status = f"role: {self.role.label()}"
         self.relayout()
       },
       "t" => {
         self.toggles.tools = !self.toggles.tools
-        self.status = on_off("도구 호출", self.toggles.tools)
+        self.status = on_off("tool calls", self.toggles.tools)
         self.relayout()
       },
       "T" => {
@@ -404,22 +404,19 @@ impl App {
       },
       "c" => {
         self.toggles.code = !self.toggles.code
-        self.status = on_off("코드 변경", self.toggles.code)
+        self.status = on_off("code changes", self.toggles.code)
         self.relayout()
       },
       "e" => {
         self.toggles.expand = !self.toggles.expand
-        self.status = on_off("접힌 블록 펼치기", self.toggles.expand)
+        self.status = on_off("expand folded blocks", self.toggles.expand)
         self.relayout()
       },
       "D" => self.ask_delete(self.current, true),
       "R" => self.ask_rename(self.current),
       "P" => {
         self.toggles.debug = !self.toggles.debug
-        self.status = on_off(
-          "디버그(메타, 알 수 없는 블록)",
-          self.toggles.debug,
-        )
+        self.status = on_off("debug (meta, unknown blocks)", self.toggles.debug)
         self.relayout()
       },
       _ => (),
@@ -473,7 +470,7 @@ impl App {
       self.scope = session.Scope.Cwd
     }
     self.reload_list()
-    self.status = f"범위: {scope_label(self.scope)}"
+    self.status = f"scope: {scope_label(self.scope)}"
   }
 
   pub fn apply_filter(self: mut Ref<Self>) {
@@ -530,8 +527,8 @@ impl App {
     if id == "" { return }
     let cmd = f"claude --resume {id}"
     self.status = match clipboard.WriteAll(cmd) {
-      Ok(_) => f"복사됨: {cmd}",
-      Err(_) => f"{cmd}  (클립보드 사용 불가)",
+      Ok(_) => f"copied: {cmd}",
+      Err(_) => f"{cmd}  (clipboard unavailable)",
     }
   }
 
@@ -550,7 +547,7 @@ impl App {
       time.Now(),
     ) {
       Ok(plan) => self.modal = Some(plan),
-      Err(e) => self.status = f"삭제 불가: {e}",
+      Err(e) => self.status = f"cannot delete: {e}",
     }
   }
 
@@ -558,7 +555,7 @@ impl App {
     self.modal = None
     // 기본은 취소. 차단되지 않았고 y 를 눌렀을 때만 실행한다.
     if k != "y" || plan.blocked.is_some() {
-      self.status = "삭제 취소"
+      self.status = "delete cancelled"
       return
     }
     match session.execute_delete(
@@ -569,9 +566,9 @@ impl App {
     ) {
       Ok(_) => {
         self.status = if plan.purge {
-          f"영구 삭제됨: {plan.session_id}"
+          f"deleted permanently: {plan.session_id}"
         } else {
-          f"휴지통으로 이동: {plan.trash_dir}"
+          f"moved to trash: {plan.trash_dir}"
         }
         // 열람 중이던 세션을 지웠으면 목록으로 돌아간다
         if self.screen == Screen.Conv {
@@ -580,7 +577,7 @@ impl App {
           self.notify_dirs()
         }
       },
-      Err(e) => self.status = f"삭제 실패: {e}",
+      Err(e) => self.status = f"delete failed: {e}",
     }
     let cursor = self.cursor
     self.reload_list()
@@ -622,12 +619,12 @@ impl App {
     match plan.blocked {
       Some(reason) => {
         lines = lines.append(st_error().Render("삭제할 수 없습니다: " + reason))
-        lines = lines.append(st_faint().Render("아무 키나 눌러 닫기"))
+        lines = lines.append(modal_hints([[hint("close", "any key")]], 90))
       },
-      None => lines = lines.append(
-        "정말 삭제할까요? " + st_warn().Render("y") +
-        " 삭제 / 그 외 키 취소 (기본: 취소)",
-      ),
+      None => lines = lines.append(modal_hints(
+        [[hint("delete", "y")], [hint("cancel", "other keys (default)")]],
+        90,
+      )),
     }
     let box = st_modal().Render(lines.join("\n"))
     lipgloss.Place(
@@ -644,7 +641,7 @@ impl App {
   fn open_path(self: mut Ref<Self>, path: string) {
     match session.load_meta(path) {
       Ok(s) => self.open_session(s),
-      Err(e) => self.status = f"열기 실패: {e}",
+      Err(e) => self.status = f"open failed: {e}",
     }
   }
 
@@ -652,7 +649,7 @@ impl App {
     self.conv = session.new_conversation(false)
     self.tail = session.new_tail(s.path)
     if let Err(e) = session.feed(&self.conv, &self.tail) {
-      self.status = f"읽기 실패: {e}"
+      self.status = f"read failed: {e}"
       return
     }
     self.current = s
@@ -743,9 +740,9 @@ impl App {
     let total = self.sessions.length()
     let shown = self.rows.length()
     let count = if shown == total {
-      f"{total} 세션"
+      f"{total} sessions"
     } else {
-      f"{shown}/{total} 세션"
+      f"{shown}/{total} sessions"
     }
     let base = st_bar()
     let crumbs = base.Render(scope_label(self.scope)) +
@@ -837,7 +834,8 @@ impl App {
     if self.filter != "" {
       return [
         "",
-        st_faint().Render("  필터와 일치하는 세션이 없습니다. esc 로 필터 해제"),
+        st_faint().Render("  필터와 일치하는 세션이 없습니다"),
+        st_faint().Render("  clear filter esc"),
       ]
     }
     match self.scope {
@@ -848,7 +846,7 @@ impl App {
           f"  찾은 위치: {self.opts.root}/{session.encode_path(self.opts.cwd)}",
         ),
         st_faint().Render(
-          "  a 키로 전체 프로젝트 보기, 또는 cci --all / --parent (worktree 에서 실행한 경우)",
+          "  all projects a | cci --all, or --parent from a worktree",
         ),
       ],
       _ => ["", st_warn().Render(f"  세션이 없습니다: {self.opts.root}")],
@@ -858,10 +856,10 @@ impl App {
   /// 창이 최소 크기보다 작을 때. 폭이 좁아도 잘리지 않게 짧은 줄로 나눈다.
   fn view_too_small(self: Ref<Self>) -> string {
     let lines = [
-      "창이 작습니다",
+      "window too small",
       f"{self.width}x{self.height}",
-      f"최소 {MIN_WIDTH}x{MIN_HEIGHT}",
-      "q 종료",
+      f"min {MIN_WIDTH}x{MIN_HEIGHT}",
+      "quit q",
     ]
     lines[..min(lines.length(), max(self.height, 1))].join("\n")
   }
@@ -870,7 +868,7 @@ impl App {
     let mut out = Slice.new<string>()
     if !self.opts.compact {
       let base = st_bar()
-      let crumbs = over(st_faint(), base).Render("세션 › ") +
+      let crumbs = over(st_faint(), base).Render("session › ") +
       over(st_title(), base).Render(self.current.title)
       let msgs = self.conv.messages
       let range = msgs
@@ -977,8 +975,8 @@ impl App {
       parts = parts.append(self.current.git_branch)
     }
     if self.current.cwd != "" { parts = parts.append(self.current.cwd) }
-    parts = parts.append(f"메시지 {count}")
-    parts = parts.append(f"프롬프트 {prompts}")
+    parts = parts.append(f"messages {count}")
+    parts = parts.append(f"prompts {prompts}")
     parts.join(" · ")
   }
 
@@ -1010,15 +1008,15 @@ impl App {
     let t = self.toggles
     let mut flags = Slice.new<string>()
     if self.role != RoleFilter.All {
-      flags = flags.append(f"역할 {self.role.label()}")
+      flags = flags.append(f"role {self.role.label()}")
     }
-    if t.tools { flags = flags.append("도구") }
+    if t.tools { flags = flags.append("tools") }
     if t.thinking { flags = flags.append("thinking") }
-    if t.code { flags = flags.append("코드") }
-    if t.expand { flags = flags.append("펼침") }
+    if t.code { flags = flags.append("code") }
+    if t.expand { flags = flags.append("expanded") }
     if t.debug {
       flags = flags.append(
-        f"디버그(unknown {self.conv.unknown_total()}, broken {self.conv.broken})",
+        f"debug (unknown {self.conv.unknown_total()}, broken {self.conv.broken})",
       )
     }
     flags.join(" · ")
@@ -1045,14 +1043,14 @@ impl App {
 }
 
 fn on_off(name: string, on: bool) -> string {
-  if on { f"{name} 표시" } else { f"{name} 숨김" }
+  if on { f"{name} shown" } else { f"{name} hidden" }
 }
 
 pub fn scope_label(scope: session.Scope) -> string {
   match scope {
-    session.Scope.Cwd => "현재 폴더",
-    session.Scope.Parent => "상위/하위 포함",
-    session.Scope.All => "전체 프로젝트",
+    session.Scope.Cwd => "current folder",
+    session.Scope.Parent => "parent and children",
+    session.Scope.All => "all projects",
   }
 }
 

@@ -71,7 +71,7 @@ impl App {
     let read = match session.feed(&self.conv, &self.tail) {
       Ok(r) => r,
       Err(e) => {
-        self.status = f"읽기 실패: {e}"
+        self.status = f"read failed: {e}"
         return
       },
     }
@@ -87,7 +87,7 @@ impl App {
     if let Some(next) = self.conv.continued_in {
       if next != self.announced_next {
         self.announced_next = next
-        self.status = f"이어진 세션이 생겼습니다: {next} (o 로 열기)"
+        self.status = f"continued in {next} (open o)"
       }
     }
   }
@@ -97,21 +97,21 @@ impl App {
     if self.follow {
       self.relayout_with(true)
       self.new_count = 0
-      self.status = "follow 켜짐: 새 메시지를 따라갑니다"
+      self.status = "follow on: tracking new messages"
     } else {
-      self.status = "follow 꺼짐"
+      self.status = "follow off"
     }
   }
 
   /// continued-in 으로 이어진 세션을 연다.
   pub fn open_continued(self: mut Ref<Self>) {
     let Some(next) = self.conv.continued_in else {
-      self.status = "이어진 세션이 없습니다"
+      self.status = "no continued session"
       return
     }
     match session.find_session(self.opts.root, next) {
       Some(p) => self.open_path(p),
-      None => self.status = f"이어진 세션 파일을 찾지 못했습니다: {next}",
+      None => self.status = f"continued session file not found: {next}",
     }
   }
 

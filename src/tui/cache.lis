@@ -165,7 +165,7 @@ impl App {
       self.plain_lines = []
       self.matches = []
       self.vp.SetContent(st_faint().Render(
-        "(표시할 메시지가 없습니다. r/t/T/c 로 필터와 토글을 바꿔 보세요)",
+        "(표시할 메시지가 없습니다)  role r | show [T]hinking  [t]ool  [c]ode",
       ))
       self.vp.GotoTop()
       return
