@@ -52,7 +52,7 @@ fn follows_new_lines() {
   let _ = app.Update(FilesChanged { paths: [path] })
   assert app.vp.YOffset() == 0
   assert app.new_count == 2
-  assert app.View().contains("새 메시지 2")
+  assert app.View().contains("new 2 (G)")
   press(&app, ["G"])
   assert app.new_count == 0
 }

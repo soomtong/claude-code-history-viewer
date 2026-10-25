@@ -153,6 +153,7 @@ fn main() {
     compact: cli.compact || cfg.compact,
     open_path,
     plain: false,
+    version: VERSION,
   }
   if cli.list {
     print_list(opts)

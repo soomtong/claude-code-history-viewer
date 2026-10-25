@@ -124,3 +124,31 @@ fn list_filter_fields() {
   // make_root 에서 cwd 가 /work/other 인 세션은 두 개 (demo 폴더에 복사한 것 포함)
   assert app.rows.length() == 2
 }
+
+#[test("상태 메시지는 만료 타이머가 지나면 사라지고 키 힌트로 돌아간다")]
+fn status_expires() {
+  let root = make_root()
+  let mut app = open_basic(root)
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let (_, cmd) = app.Update(shim.Key("t"))
+  assert app.status != ""
+  assert cmd.is_some()
+  assert !screen(&app).contains("search /")
+  let first = app.status_gen
+  // 같은 키를 다시 눌러 새 메시지가 뜨면 이전 타이머는 무시된다
+  let _ = app.Update(shim.Key("t"))
+  assert app.status_gen == first + 1
+  let _ = app.Update(StatusExpired { generation: first })
+  assert app.status != ""
+  let _ = app.Update(StatusExpired { generation: app.status_gen })
+  assert app.status == ""
+  let s = screen(&app)
+  assert s.contains("move prompt { }  message [ ]  list h")
+  assert s.contains("[T]hinking")
+  // 상태를 띄우지 않는 키는 타이머를 걸지 않는다
+  let gen = app.status_gen
+  let _ = app.Update(shim.Key("j"))
+  assert app.status_gen == gen
+}

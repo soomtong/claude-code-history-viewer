@@ -21,6 +21,7 @@ pub struct Options {
   pub compact: bool,
   pub open_path: string, // 바로 열 세션 경로 ("" 이면 목록부터)
   pub plain: bool, // 테스트에서 glamour 를 끄고 평문 렌더만 쓰기
+  pub version: string, // 헤더에 보일 앱 버전 ("" 이면 생략)
 }
 
 pub enum Screen {
@@ -41,6 +42,12 @@ pub struct Span {
 /// 리사이즈 디바운스 완료
 struct ResizeDone { generation: int }
 
+/// 상태 메시지를 보여 주는 시간(초). 지나면 하단 줄이 키 힌트로 돌아간다 (0015).
+pub const STATUS_TTL_SECS = 4
+
+/// 상태 메시지 만료. generation 이 최신일 때만 지운다 (그 사이 새 메시지가 떴으면 무시).
+struct StatusExpired { generation: int }
+
 pub struct App {
   pub opts: Options,
   pub screen: Screen,
@@ -48,6 +55,7 @@ pub struct App {
   pub height: int,
   pub help: bool,
   pub status: string,
+  status_gen: int, // 상태 메시지를 새로 띄울 때마다 증가 (만료 타이머 구분)
   pub quitting: bool,
   // 목록
   pub scope: session.Scope,
@@ -138,28 +146,48 @@ impl App {
     self: mut Ref<Self>,
     msg: tea.Msg,
   ) -> (tea.Model, Option<tea.Cmd>) {
+    if let Some(e) = assert_type<StatusExpired>(msg) {
+      if e.generation == self.status_gen { self.status = "" }
+      return (self, None)
+    }
+    let before = self.status
+    let is_key = assert_type<tea.KeyMsg>(msg).is_some()
+    let cmd = self.dispatch(msg)
+    // 키가 띄운 메시지는 같은 글이어도 타이머를 다시 건다. 그 밖의 메시지는 글이 바뀔 때만.
+    if self.status == "" || (!is_key && self.status == before) {
+      return (self, cmd)
+    }
+    self.status_gen += 1
+    let generation = self.status_gen
+    let ttl = (STATUS_TTL_SECS as time.Duration) * time.Second
+    let expire = tea.Tick(ttl, |_| StatusExpired { generation })
+    let next = match cmd {
+      Some(c) => tea.Batch(c, expire),
+      None => Some(expire),
+    }
+    (self, next)
+  }
+
+  fn dispatch(self: mut Ref<Self>, msg: tea.Msg) -> Option<tea.Cmd> {
     if let Some(size) = assert_type<tea.WindowSizeMsg>(msg) {
-      return (self, self.on_resize(size.Width, size.Height))
+      return self.on_resize(size.Width, size.Height)
     }
     if let Some(done) = assert_type<ResizeDone>(msg) {
       if done.generation == self.resize_gen && self.has_conv { self.relayout() }
-      return (self, None)
+      return None
     }
-    if let Some(key) = assert_type<tea.KeyMsg>(msg) {
-      let cmd = self.on_key(key)
-      return (self, cmd)
-    }
+    if let Some(key) = assert_type<tea.KeyMsg>(msg) { return self.on_key(key) }
     if let Some(changed) = assert_type<FilesChanged>(msg) {
       self.on_files(changed.paths)
-      return (self, None)
+      return None
     }
-    if self.editing() { return (self, Some(self.feed_input(msg))) }
+    if self.editing() { return Some(self.feed_input(msg)) }
     if self.screen == Screen.Conv {
       let cmd = self.vp.Update(msg)
       self.ensure_rendered()
-      return (self, Some(cmd))
+      return Some(cmd)
     }
-    (self, None)
+    None
   }
 
   #[allow(non_snake_case_function)]
@@ -723,7 +751,12 @@ impl App {
     let crumbs = base.Render(scope_label(self.scope)) +
     over(st_faint(), base).Render(" › ") +
     over(lipgloss.NewStyle().Bold(true), base).Render(self.opts.cwd)
-    lines = lines.append(header_bar(crumbs, count, self.width))
+    lines = lines.append(header_bar(
+      self.opts.version,
+      crumbs,
+      count,
+      self.width,
+    ))
     if self.filter_editing {
       lines = lines.append(" / " + self.input_line(self.filter, self.width - 4))
     } else if self.filter != "" {
@@ -743,22 +776,22 @@ impl App {
       lines = lines.append("")
     }
     let hints = if self.filter_editing {
-      [hint("↵", "확정"), hint("esc", "취소")]
+      [[hint("confirm", "↵"), hint("cancel", "esc")]]
     } else {
       [
-        hint("↵", "열기"),
-        hint("/", "필터"),
-        hint("D", "삭제"),
-        hint("R", "제목"),
-        hint("y", "resume 복사"),
-        hint("a", "범위"),
-        hint("^r", "새로고침"),
-        hint("?", "전체 키"),
-        hint("q", "종료"),
+        [hint("open", "↵"), hint("filter", "/"), hint("scope", "a")],
+        [
+          label("session"),
+          hint("rename", "R"),
+          hint("delete", "D"),
+          hint("resume", "y"),
+          hint("refresh", "^r"),
+        ],
+        [hint("help", "?"), hint("quit", "q")],
       ]
     }
     let pos = if shown == 0 { "" } else { f"{self.cursor + 1}/{shown}" }
-    lines = lines.append(footer(self.status, hints, pos, self.width))
+    lines = lines.append(footer(self.status, "", hints, pos, self.width))
     lines.join("\n")
   }
 
@@ -843,7 +876,7 @@ impl App {
       let range = msgs
         .get(0)
         .map_or("", |m| time_range(m.time, msgs[msgs.length() - 1].time))
-      out = out.append(header_bar(crumbs, range, self.width))
+      out = out.append(header_bar(self.opts.version, crumbs, range, self.width))
       let flags = self.flag_text()
       let right = if flags == "" { "" } else { st_faint().Render(flags + " ") }
       out = out.append(fit(
@@ -856,20 +889,35 @@ impl App {
     }
     out = out.append(self.body_view())
     let search = self.search_status()
-    let msg = if self.status != "" {
-      self.status
-    } else if search != "" && self.search_editing {
-      f"{search}  ↵ 확정 · esc 취소"
-    } else if search != "" { f"{search}  n/N 매치 · esc 해제" } else { "" }
-    let hints = [
-      hint("] [", "메시지"),
-      hint("} {", "프롬프트"),
-      hint("/", "검색"),
-      hint("t T c", "표시"),
-      hint("h", "목록"),
-      hint("?", "전체 키"),
-    ]
-    out = out.append(footer(msg, hints, self.conv_position(), self.width))
+    let hints = if self.search_editing {
+      [[hint("confirm", "↵"), hint("cancel", "esc")]]
+    } else if search != "" {
+      [[hint("match", "n N"), hint("clear", "esc")], [hint("help", "?")]]
+    } else {
+      [
+        [
+          label("move"),
+          hint("prompt", "{ }"),
+          hint("message", "[ ]"),
+          hint("list", "h"),
+        ],
+        [
+          hint("search", "/"),
+          label("show"),
+          mnemonic("T", "hinking"),
+          mnemonic("t", "ool"),
+          mnemonic("c", "ode"),
+        ],
+        [hint("help", "?")],
+      ]
+    }
+    out = out.append(footer(
+      self.status,
+      search,
+      hints,
+      self.conv_position(),
+      self.width,
+    ))
     out.join("\n")
   }
 
@@ -940,7 +988,7 @@ impl App {
     let live = self.live_text()
     if live != "" { parts = parts.append(live) }
     if self.spans.is_empty() {
-      parts = parts.append("메시지 0")
+      parts = parts.append("msg 0")
       return parts.join(" · ")
     }
     let i = self.span_at(self.vp.YOffset())
@@ -951,8 +999,8 @@ impl App {
       total_p += 1
       if k <= i { p += 1 }
     }
-    if total_p > 0 { parts = parts.append(f"프롬프트 {p}/{total_p}") }
-    parts = parts.append(f"메시지 {i + 1}/{self.spans.length()}")
+    if total_p > 0 { parts = parts.append(f"prompt {p}/{total_p}") }
+    parts = parts.append(f"msg {i + 1}/{self.spans.length()}")
     parts = parts.append(f"{(self.vp.ScrollPercent() * 100.0) as int}%")
     parts.join(" · ")
   }
