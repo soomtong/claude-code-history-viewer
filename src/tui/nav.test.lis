@@ -1,0 +1,100 @@
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
+import "go:os"
+import "go:path/filepath"
+
+import "session"
+
+#[test("대화 화면 H/L: 목록 순서대로 최근/예전 세션으로, 끝에서는 알림, 소문자 l 은 아무 동작 없음")]
+fn adjacent_sessions() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  // 목록은 최근 순: A(1시간 전), B(2시간 전)
+  press(&app, ["enter"])
+  assert app.current.id == SID_A
+  press(&app, ["H"])
+  assert app.status == "No newer session"
+  assert app.current.id == SID_A
+  press(&app, ["L"])
+  assert app.screen == Screen.Conv
+  assert app.current.id == SID_B
+  assert app.status == "Session 2/2"
+  assert app.cursor == 1
+  press(&app, ["L"])
+  assert app.status == "No older session"
+  assert app.current.id == SID_B
+  press(&app, ["H"])
+  assert app.current.id == SID_A
+  assert app.status == "Session 1/2"
+  // 소문자 l 은 아무 동작도 하지 않는다
+  press(&app, ["l"])
+  assert app.current.id == SID_A
+  assert app.screen == Screen.Conv
+  assert app.status == ""
+  // 목록으로 돌아가면 지금 세션이 선택돼 있다
+  press(&app, ["L", "h"])
+  assert app.screen == Screen.List
+  let Some(sel) = app.selected() else {
+    assert false
+    return
+  }
+  assert sel.id == SID_B
+}
+
+#[test("H/L: 지금 세션이 목록(범위)에 없으면 넘어가지 않고 알린다")]
+fn adjacent_outside_scope() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  // 다른 프로젝트의 세션을 바로 연다. 목록 범위는 현재 폴더(/work/demo-app)
+  let other = filepath.Join(
+    root,
+    session.encode_path("/work/other"),
+    "cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee.jsonl",
+  )
+  let mut o = opts(root)
+  o.open_path = other
+  let mut app = new_app(o)
+  let _ = app.Update(shim.WindowSize(100, 30))
+  assert app.screen == Screen.Conv
+  press(&app, ["L"])
+  assert app.status.contains("not in the list")
+  assert app.current.path == other
+}
+
+#[test("연타로 뭉친 글자는 하나씩 처리하고, 입력창과 붙여넣기는 그대로 넣는다")]
+fn burst_keys() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  // 목록: "jj" 를 키 하나로 받아도 두 칸 내려간다 (항목 2개라 끝에서 멈춤)
+  let _ = app.Update(shim.Key("jk"))
+  assert app.cursor == 0
+  let _ = app.Update(shim.Key("jj"))
+  assert app.cursor == 1
+  // 대화: "HH" 도 하나씩 (B 에서 시작해 A, 그 다음은 끝 알림)
+  press(&app, ["enter"])
+  assert app.current.id == SID_B
+  let _ = app.Update(shim.Key("HH"))
+  assert app.current.id == SID_A
+  assert app.status == "No newer session"
+  // 입력창에서는 뭉친 글자를 그대로 넣는다
+  press(&app, ["h", "/"])
+  let _ = app.Update(shim.Key("gre"))
+  assert app.filter == "gre"
+  press(&app, ["esc"])
+  // 붙여넣기는 나누지 않는다 (목록에서 붙여넣은 "jj" 는 키가 아니다)
+  let before = app.cursor
+  let _ = app.Update(shim.Paste("jj"))
+  assert app.cursor == before
+  // 뭉친 글자 중 q 에서 종료하면 뒤 글자는 처리하지 않는다
+  let _ = app.Update(shim.Key("qj"))
+  assert app.quitting
+}

@@ -75,8 +75,8 @@ impl App {
       "",
       modal_hints(
         [
-          [hint("save", "enter"), hint("cancel", "esc")],
-          [hint("start/end", "^a ^e"), hint("delete before/after", "^u ^k")],
+          [hint("Save", "enter"), hint("Cancel", "esc")],
+          [hint("Start/end", "^a ^e"), hint("Delete before/after", "^u ^k")],
         ],
         w,
       ),

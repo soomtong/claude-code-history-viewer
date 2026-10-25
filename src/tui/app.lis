@@ -178,7 +178,7 @@ impl App {
       if done.generation == self.resize_gen && self.has_conv { self.relayout() }
       return None
     }
-    if let Some(key) = assert_type<tea.KeyMsg>(msg) { return self.on_key(key) }
+    if let Some(key) = assert_type<tea.KeyMsg>(msg) { return self.on_keys(key) }
     if let Some(changed) = assert_type<FilesChanged>(msg) {
       self.on_files(changed.paths)
       return None
@@ -238,6 +238,19 @@ impl App {
   }
 
   // ---------- 키 ----------
+
+  /// 연타로 뭉쳐 들어온 글자("LL", "jj")는 하나씩 처리한다. 입력창에서는 뭉친 그대로 넣는다 (0019).
+  fn on_keys(self: mut Ref<Self>, key: tea.KeyMsg) -> Option<tea.Cmd> {
+    if self.editing() { return self.on_key(key) }
+    let keys = shim.SplitRunes(key)
+    if keys.length() == 1 { return self.on_key(key) }
+    let mut cmds = Slice.new<tea.Cmd>()
+    for k in keys {
+      if let Some(c) = self.on_key(k) { cmds = cmds.append(c) }
+      if self.quitting { break }
+    }
+    tea.Batch(cmds...)
+  }
 
   pub fn on_key(self: mut Ref<Self>, key: tea.KeyMsg) -> Option<tea.Cmd> {
     let k = key.String()
@@ -390,6 +403,8 @@ impl App {
         }
       },
       "h" | "left" | "backspace" => self.back_to_list(),
+      "H" => self.open_adjacent(-1),
+      "L" => self.open_adjacent(1),
       "y" => self.copy_resume(self.current.id),
       "F" => self.toggle_follow(),
       "o" => self.open_continued(),
@@ -629,10 +644,10 @@ impl App {
     match plan.blocked {
       Some(reason) => {
         lines = lines.append(st_error().Render("삭제할 수 없습니다: " + reason))
-        lines = lines.append(modal_hints([[hint("close", "any key")]], 90))
+        lines = lines.append(modal_hints([[hint("Close", "any key")]], 90))
       },
       None => lines = lines.append(modal_hints(
-        [[hint("delete", "y")], [hint("cancel", "other keys (default)")]],
+        [[hint("Delete", "y")], [hint("Cancel", "other keys (default)")]],
         90,
       )),
     }
@@ -671,6 +686,40 @@ impl App {
     self.vp.GotoTop()
     self.relayout_with(self.starts_at_bottom(s))
     self.notify_dirs()
+  }
+
+  /// 대화 화면에서 목록 순서대로 옆 세션을 연다 (0019).
+  /// delta -1 은 위(더 최근), 1 은 아래(더 예전). 목록은 지금 범위와 필터 그대로다.
+  fn open_adjacent(self: mut Ref<Self>, delta: int) {
+    if self.sessions.is_empty() { self.reload_list() }
+    let mut at = -1
+    for (i, r) in self.rows.enumerate() {
+      // id 대신 경로로 찾는다: 경로는 항상 하나뿐이다
+      if self.sessions[r].path == self.current.path {
+        at = i
+        break
+      }
+    }
+    if at < 0 {
+      self.status = "Current session is not in the list (scope or filter)"
+      return
+    }
+    let next = at + delta
+    if next < 0 {
+      self.status = "No newer session"
+      return
+    }
+    if next >= self.rows.length() {
+      self.status = "No older session"
+      return
+    }
+    let s = self.sessions[self.rows[next]]
+    self.open_session(s)
+    // 읽기에 실패하면 open_session 이 상태만 남기고 지금 세션을 유지한다
+    if self.current.path != s.path { return }
+    self.cursor = next
+    self.clamp_list()
+    self.status = f"Session {next + 1}/{self.rows.length()}"
   }
 
   fn back_to_list(self: mut Ref<Self>) {
@@ -782,10 +831,10 @@ impl App {
       lines = lines.append("")
     }
     let hints = if self.filter_editing {
-      [[hint("confirm", "↵"), hint("cancel", "esc")]]
+      [[hint("Confirm", "↵"), hint("Cancel", "esc")]]
     } else {
       [
-        [hint("open", "↵"), hint("filter", "/"), hint("scope", "a")],
+        [hint("Open", "↵"), hint("Filter", "/"), hint("Scope", "a")],
         [
           label("Session"),
           hint("rename", "R"),
@@ -793,7 +842,7 @@ impl App {
           hint("resume", "y"),
           hint("refresh", "^r"),
         ],
-        [hint("help", "?"), hint("quit", "q")],
+        [hint("Help", "?"), hint("Quit", "q")],
       ]
     }
     let pos = if shown == 0 { "" } else { f"{self.cursor + 1}/{shown}" }
@@ -844,7 +893,7 @@ impl App {
       return [
         "",
         st_faint().Render("  필터와 일치하는 세션이 없습니다"),
-        st_faint().Render("  clear filter esc"),
+        st_faint().Render("  Clear filter esc"),
       ]
     }
     match self.scope {
@@ -855,7 +904,7 @@ impl App {
           f"  찾은 위치: {self.opts.root}/{session.encode_path(self.opts.cwd)}",
         ),
         st_faint().Render(
-          "  all projects a | cci --all, or --parent from a worktree",
+          "  All projects a | cci --all, or --parent from a worktree",
         ),
       ],
       _ => ["", st_warn().Render(f"  세션이 없습니다: {self.opts.root}")],
@@ -868,7 +917,7 @@ impl App {
       "Window too small",
       f"{self.width}x{self.height}",
       f"Min {MIN_WIDTH}x{MIN_HEIGHT}",
-      "quit q",
+      "Quit q",
     ]
     lines[..min(lines.length(), max(self.height, 1))].join("\n")
   }
@@ -897,25 +946,26 @@ impl App {
     out = out.append(self.body_view())
     let search = self.search_status()
     let hints = if self.search_editing {
-      [[hint("confirm", "↵"), hint("cancel", "esc")]]
+      [[hint("Confirm", "↵"), hint("Cancel", "esc")]]
     } else if search != "" {
-      [[hint("match", "n N"), hint("clear", "esc")], [hint("help", "?")]]
+      [[hint("Match", "n N"), hint("Clear", "esc")], [hint("Help", "?")]]
     } else {
       [
         [
           label("Move"),
           hint("prompt", "{ }"),
           hint("message", "[ ]"),
+          hint("session", "H L"),
           hint("list", "h"),
         ],
         [
-          hint("search", "/"),
+          hint("Search", "/"),
           label("Show"),
           mnemonic("T", "hinking"),
           mnemonic("t", "ool"),
           mnemonic("c", "ode"),
         ],
-        [hint("help", "?")],
+        [hint("Help", "?")],
       ]
     }
     out = out.append(footer(

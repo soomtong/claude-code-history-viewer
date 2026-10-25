@@ -146,6 +146,20 @@ func Key(name string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
 }
 
+// SplitRunes 는 한 번에 읽힌 여러 글자 KeyMsg 를 글자마다 하나씩 나눈다.
+// 빠르게 연타하면(또는 앱이 바쁜 동안 입력이 쌓이면) Bubble Tea 가 "LL", "jj" 를 KeyMsg 하나로 넘긴다.
+// 붙여넣기(Paste)나 한 글자 키, 글자가 아닌 키는 그대로 하나만 돌려준다 (docs/decisions/0019).
+func SplitRunes(k tea.KeyMsg) []tea.KeyMsg {
+	if k.Type != tea.KeyRunes || k.Paste || len(k.Runes) < 2 {
+		return []tea.KeyMsg{k}
+	}
+	out := make([]tea.KeyMsg, 0, len(k.Runes))
+	for _, r := range k.Runes {
+		out = append(out, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: k.Alt})
+	}
+	return out
+}
+
 // Paste 는 터미널 붙여넣기(bracketed paste)로 들어온 KeyMsg 를 만든다.
 func Paste(text string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true}

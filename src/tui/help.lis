@@ -72,6 +72,7 @@ fn help_sections() -> Slice<HelpSection> {
         hk("h ← esc", "목록으로"),
         hk("] [", "다음 / 이전 메시지"),
         hk("} {", "다음 / 이전 프롬프트"),
+        hk("H L", "최근 / 예전 세션"),
         hk("/", "본문 검색"),
         hk("n N", "다음 / 이전 매치"),
         hk("r", "역할 순환"),
@@ -271,8 +272,8 @@ impl App {
     let end = min(top + h, body.length())
     let scrolls = body.length() > h
     let mut groups = Slice.new<Slice<Hint>>()
-    if scrolls { groups = groups.append([hint("scroll", "j k")]) }
-    groups = groups.append([hint("close", "esc")])
+    if scrolls { groups = groups.append([hint("Scroll", "j k")]) }
+    groups = groups.append([hint("Close", "esc")])
     let pos = if scrolls { f"{top + 1}-{end}/{body.length()}" } else { "" }
     let mut inner = 0
     for l in body {
