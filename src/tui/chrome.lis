@@ -1,19 +1,34 @@
-// 화면 틀: 상단 헤더 띠, 하단 키 힌트 줄, 목록의 날짜 묶음 (docs/decisions/0011).
+// 화면 틀: 상단 헤더 띠, 하단 키 힌트 줄, 목록의 날짜 묶음 (docs/decisions/0011, 0015).
 // 띠는 왼쪽(내용)과 오른쪽(상태)으로 나누고, 좁으면 왼쪽부터 줄인다.
 import "go:github.com/charmbracelet/lipgloss"
 import "go:github.com/charmbracelet/x/ansi"
 import "go:strings"
 import "go:time"
 
-/// 하단 힌트 하나: 키는 진하게, 설명은 흐리게
-pub struct Hint {
-  pub key: string,
-  pub desc: string,
+/// 하단 힌트 하나. 설명은 흐리게, 키는 진하게 그린다.
+pub enum Hint {
+  /// 설명 다음 키: `prompt { }`
+  Key { desc: string, key: string },
+  /// 키가 단어 첫 글자인 토글: `[T]hinking`
+  Mnemonic { key: string, rest: string },
+  /// 뒤 힌트들을 묶는 이름: `move`, `show`
+  Label(string),
 }
 
-fn hint(key: string, desc: string) -> Hint {
-  Hint { key, desc }
+fn hint(desc: string, key: string) -> Hint {
+  Hint.Key { desc, key }
 }
+
+fn mnemonic(key: string, rest: string) -> Hint {
+  Hint.Mnemonic { key, rest }
+}
+
+fn label(text: string) -> Hint {
+  Hint.Label(text)
+}
+
+/// 힌트 묶음 사이 구분
+pub const HINT_GROUP_SEP = " | "
 
 fn spaces(n: int) -> string {
   strings.Repeat(" ", max(n, 0))
@@ -40,30 +55,103 @@ pub fn fit(
   l + base.Render(spaces(gap)) + r
 }
 
-/// 키 힌트를 폭 안에 들어가는 만큼만 그린다 (앞쪽이 더 중요한 키).
+fn hint_text(h: Hint) -> string {
+  match h {
+    Hint.Key { desc, key } => desc + " " + key,
+    Hint.Mnemonic { key, rest } => "[" + key + "]" + rest,
+    Hint.Label(text) => text,
+  }
+}
+
+fn render_hint(h: Hint, base: lipgloss.Style) -> string {
+  let key = over(lipgloss.NewStyle().Bold(true), base)
+  let desc = over(lipgloss.NewStyle().Faint(true), base)
+  match h {
+    Hint.Key { desc: d, key: k } => desc.Render(d + " ") + key.Render(k),
+    Hint.Mnemonic { key: k, rest } => desc.Render("[") + key.Render(k) +
+    desc.Render("]" + rest),
+    Hint.Label(text) => over(lipgloss.NewStyle().Faint(true).Italic(true), base).Render(
+      text,
+    ),
+  }
+}
+
+/// 힌트를 한 줄로 펼친다: (앞 구분, 힌트). 묶음 사이는 ` | `, 힌트 사이는 gap, 이름(Label) 뒤는 한 칸.
+fn layout_hints(
+  groups: Slice<Slice<Hint>>,
+  labels: bool,
+  gap: string,
+) -> (Slice<string>, Slice<Hint>) {
+  let mut seps = Slice.new<string>()
+  let mut items = Slice.new<Hint>()
+  for g in groups {
+    let mut first = true
+    let mut after_label = false
+    for h in g {
+      let is_label = if let Hint.Label(_) = h { true } else { false }
+      if is_label && !labels { continue }
+      let sep = if items.is_empty() {
+        ""
+      } else if first {
+        HINT_GROUP_SEP
+      } else if after_label { " " } else { gap }
+      seps = seps.append(sep)
+      items = items.append(h)
+      first = false
+      after_label = is_label
+    }
+  }
+  (seps, items)
+}
+
+fn hints_width(seps: Slice<string>, items: Slice<Hint>) -> int {
+  let mut w = 0
+  for (i, h) in items.enumerate() {
+    w += ansi.StringWidth(seps[i] + hint_text(h))
+  }
+  w
+}
+
+/// 키 힌트 묶음을 폭 안에 그린다. 다 들어가지 않으면 차례로 줄인다:
+/// 힌트 사이 두 칸 -> 한 칸, 묶음 이름(move, show) 생략, 그래도 넘치면 뒤에서부터 자른다(앞쪽이 더 중요한 키).
+/// 자를 때 이름은 뒤 힌트까지 들어갈 때만, 묶음 구분은 다음 힌트가 들어갈 때만 그린다.
 pub fn render_hints(
-  hints: Slice<Hint>,
+  groups: Slice<Slice<Hint>>,
   width: int,
   base: lipgloss.Style,
 ) -> string {
-  let key = over(lipgloss.NewStyle().Bold(true), base)
-  let desc = over(lipgloss.NewStyle().Faint(true), base)
+  let mut level = 2
+  for (k, (labels, gap)) in [(true, "  "), (true, " ")].enumerate() {
+    let (s, it) = layout_hints(groups, labels, gap)
+    if 1 + hints_width(s, it) <= width {
+      level = k
+      break
+    }
+  }
+  let gap = if level == 0 { "  " } else { " " }
+  let (seps, items) = layout_hints(groups, level < 2, gap)
+  let faint = over(lipgloss.NewStyle().Faint(true), base)
   let mut out = base.Render(" ")
   let mut used = 1
-  for (i, h) in hints.enumerate() {
-    let sep = if i == 0 { "" } else { "  " }
-    let w = ansi.StringWidth(sep + h.key + " " + h.desc)
+  for (i, h) in items.enumerate() {
+    let mut w = ansi.StringWidth(seps[i] + hint_text(h))
+    if let Hint.Label(_) = h {
+      if i + 1 >= items.length() { break }
+      w += ansi.StringWidth(seps[i + 1] + hint_text(items[i + 1]))
+    }
     if used + w > width { break }
-    out += base.Render(sep) + key.Render(h.key) + desc.Render(" " + h.desc)
-    used += w
+    out += faint.Render(seps[i]) + render_hint(h, base)
+    used += ansi.StringWidth(seps[i] + hint_text(h))
   }
   out
 }
 
-/// 하단 줄: 상태 메시지가 있으면 힌트 대신 보여준다. right 는 위치/모니터링 같은 상태.
+/// 하단 줄: 상태 메시지가 있으면 힌트 대신 보여준다(잠시 뒤 사라진다, 0015).
+/// lead 는 힌트 앞에 붙는 입력 상태(검색어), right 는 위치/모니터링 같은 상태.
 pub fn footer(
   status: string,
-  hints: Slice<Hint>,
+  lead: string,
+  hints: Slice<Slice<Hint>>,
   right: string,
   width: int,
 ) -> string {
@@ -72,20 +160,43 @@ pub fn footer(
   let room = width - ansi.StringWidth(r) - 1
   let left = if status != "" {
     base.Render(" " + status)
+  } else if lead != "" {
+    let l = base.Render(" " + lead + " ")
+    l + render_hints(hints, room - ansi.StringWidth(l), base)
   } else {
     render_hints(hints, room, base)
   }
   fit(left, r, width, base)
 }
 
-/// 상단 띠: 앱 배지 + 위치(breadcrumb) | 오른쪽 요약
-pub fn header_bar(crumbs: string, right: string, width: int) -> string {
+/// 헤더의 앱 이름 (버전이 비면 이름만)
+pub fn app_title(version: string) -> string {
+  let name = "Claude code history viewer"
+  if version == "" { name } else { f"{name} {version}" }
+}
+
+/// 헤더에서 위치(breadcrumb)에 최소한 남길 폭. 이보다 좁아지면 앱 이름을 뺀다.
+const CRUMBS_MIN = 20
+
+/// 상단 띠: 배지 ` CCi ` + 앱 이름과 버전 | 위치(breadcrumb), 오른쪽에 요약.
+/// 위치가 길면 `…` 로 줄이고, 위치에 CRUMBS_MIN 칸도 남지 않으면 앱 이름을 빼고 배지와 위치만 남긴다.
+pub fn header_bar(
+  version: string,
+  crumbs: string,
+  right: string,
+  width: int,
+) -> string {
   let base = st_bar()
-  let left = st_badge().Render(" cci ") + base.Render(" ") + crumbs
-  let r = if right == "" {
-    ""
+  let faint = over(st_faint(), base)
+  let badge = st_badge().Render(" CCi ")
+  let r = if right == "" { "" } else { faint.Render(right + " ") }
+  let title = badge + base.Render(" - " + app_title(version)) +
+  faint.Render(HINT_GROUP_SEP)
+  let need = ansi.StringWidth(title) + min(ansi.StringWidth(crumbs), CRUMBS_MIN)
+  let left = if need + ansi.StringWidth(r) + 1 <= width {
+    title + crumbs
   } else {
-    over(st_faint(), base).Render(right + " ")
+    badge + base.Render(" ") + crumbs
   }
   fit(left, r, width, base)
 }

@@ -133,9 +133,7 @@ impl App {
     } else {
       parts = parts.append("○ follow")
     }
-    if self.new_count > 0 {
-      parts = parts.append(f"새 메시지 {self.new_count} (G)")
-    }
+    if self.new_count > 0 { parts = parts.append(f"new {self.new_count} (G)") }
     parts.join(" ")
   }
 }
