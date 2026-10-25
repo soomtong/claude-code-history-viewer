@@ -1,0 +1,283 @@
+// 도움말 모달 (?, docs/decisions/0017). 키 묶음을 1~3열로 배치해 키와 설명을 세로로 맞추고,
+// 테두리 상자에 담아 현재 화면 위에 띄운다. 넘치면 상자 안에서 스크롤한다.
+import "go:github.com/charmbracelet/lipgloss"
+import "go:github.com/charmbracelet/x/ansi"
+
+/// 도움말 한 줄: 키와 설명
+struct HelpKey { key: string, desc: string }
+
+/// 도움말 묶음: 제목과 키 목록
+struct HelpSection { title: string, keys: Slice<HelpKey> }
+
+/// 열 사이 간격
+const HELP_COL_GAP = 4
+
+/// 키와 설명 사이 간격
+const HELP_KEY_GAP = 2
+
+fn hk(key: string, desc: string) -> HelpKey {
+  HelpKey { key, desc }
+}
+
+/// 묶음 순서는 열로 나눌 때 높이가 고르게 되도록 정했다 (입력은 목록 필터와 붙여 둔다).
+fn help_sections() -> Slice<HelpSection> {
+  [
+    HelpSection {
+      title: "공통",
+      keys: [
+        hk("?", "도움말 열기 / 닫기"),
+        hk("q", "종료"),
+        hk("ctrl+c", "강제 종료"),
+      ],
+    },
+    HelpSection {
+      title: "이동",
+      keys: [
+        hk("j k  ↓ ↑", "한 줄"),
+        hk("d u", "1/4 페이지"),
+        hk("^d ^u", "반 페이지"),
+        hk("^f ^b", "한 페이지 (PgDn PgUp)"),
+        hk("g G", "처음 / 끝 (Home End)"),
+      ],
+    },
+    HelpSection {
+      title: "목록",
+      keys: [
+        hk("enter l →", "열기"),
+        hk("/", "필터 (제목, cwd, 날짜 …)"),
+        hk("esc", "필터 해제"),
+        hk("a", "범위 전환"),
+        hk("R", "제목 변경"),
+        hk("D", "삭제 (확인 창)"),
+        hk("y", "resume 명령 복사"),
+        hk("^r", "새로고침"),
+      ],
+    },
+    HelpSection {
+      title: "입력 (제목, 필터, 검색)",
+      keys: [
+        hk("← → ^b ^f", "한 글자"),
+        hk("alt+b alt+f", "한 단어"),
+        hk("^a ^e", "처음 / 끝"),
+        hk("^w", "앞 단어 지우기"),
+        hk("^u ^k", "커서 앞 / 뒤 지우기"),
+        hk("^d del", "뒤 글자 지우기"),
+        hk("^v", "붙여넣기"),
+        hk("enter esc", "확정 / 취소"),
+      ],
+    },
+    HelpSection {
+      title: "대화",
+      keys: [
+        hk("h ← esc", "목록으로"),
+        hk("] [", "다음 / 이전 메시지"),
+        hk("} {", "다음 / 이전 프롬프트"),
+        hk("/", "본문 검색"),
+        hk("n N", "다음 / 이전 매치"),
+        hk("r", "역할 순환"),
+        hk("t", "도구 호출 표시"),
+        hk("T", "thinking 표시"),
+        hk("c", "코드 변경 표시"),
+        hk("e", "접힌 블록 펼치기"),
+        hk("P", "디버그 표시"),
+        hk("F", "follow (새 메시지)"),
+        hk("o", "이어진 세션 열기"),
+        hk("R", "제목 변경"),
+        hk("D", "삭제"),
+        hk("y", "resume 명령 복사"),
+      ],
+    },
+    HelpSection {
+      title: "표식",
+      keys: [
+        hk("›", "프롬프트"),
+        hk("●", "응답, 도구 호출"),
+        hk("⎿", "도구 결과"),
+        hk("✗", "오류"),
+        hk("✻", "thinking"),
+        hk("⋯", "메타"),
+        hk("◆", "스크롤바의 프롬프트 위치"),
+      ],
+    },
+  ]
+}
+
+/// 묶음들이 한 열에 놓일 때의 (키 칸 폭, 열 폭, 높이). 묶음 사이에 빈 줄 하나.
+fn column_size(secs: Slice<HelpSection>) -> (int, int, int) {
+  let mut kw = 0
+  let mut dw = 0
+  let mut tw = 0
+  let mut h = 0
+  for (i, s) in secs.enumerate() {
+    tw = max(tw, ansi.StringWidth(s.title))
+    for e in s.keys {
+      kw = max(kw, ansi.StringWidth(e.key))
+      dw = max(dw, ansi.StringWidth(e.desc))
+    }
+    let gap = if i > 0 { 1 } else { 0 }
+    h += 1 + s.keys.length() + gap
+  }
+  (kw, max(kw + HELP_KEY_GAP + dw, tw), h)
+}
+
+/// 묶음 순서를 지키며 n 열로 나누는 모든 경우 (n 은 1~3)
+fn splits(secs: Slice<HelpSection>, n: int) -> Slice<Slice<Slice<HelpSection>>> {
+  let len = secs.length()
+  let mut out = Slice.new<Slice<Slice<HelpSection>>>()
+  if n == 1 { return [[secs]] }
+  if n == 2 {
+    for a in 1..len {
+      out = out.append([secs[..a], secs[a..]])
+    }
+    return out
+  }
+  for a in 1..len - 1 {
+    for b in a + 1..len {
+      out = out.append([secs[..a], secs[a..b], secs[b..]])
+    }
+  }
+  out
+}
+
+/// 열 배치의 (전체 폭, 가장 높은 열, 가장 낮은 열)
+fn layout_size(cols: Slice<Slice<HelpSection>>) -> (int, int, int) {
+  let mut w = 0
+  let mut h = 0
+  let mut low = -1
+  for (i, c) in cols.enumerate() {
+    let (_, cw, ch) = column_size(c)
+    let gap = if i > 0 { HELP_COL_GAP } else { 0 }
+    w += cw + gap
+    h = max(h, ch)
+    low = if low < 0 { ch } else { min(low, ch) }
+  }
+  (w, h, low)
+}
+
+/// 폭 max_w 안에 들어가는 가장 많은 열 수(최대 3)에서 가장 낮은 배치. 높이가 같으면 열 높이가 고른 쪽.
+/// 한 열도 넘치면 한 열.
+fn pick_columns(
+  secs: Slice<HelpSection>,
+  max_w: int,
+) -> Slice<Slice<HelpSection>> {
+  for n in [3, 2] {
+    let options = splits(secs, n)
+    let mut best = -1
+    let mut best_h = 0
+    let mut best_spread = 0
+    for (i, cols) in options.enumerate() {
+      let (w, h, low) = layout_size(cols)
+      if w > max_w { continue }
+      if best < 0 || h < best_h || (h == best_h && h - low < best_spread) {
+        best = i
+        best_h = h
+        best_spread = h - low
+      }
+    }
+    if best >= 0 { return options[best] }
+  }
+  [secs]
+}
+
+/// 한 열의 줄들. 키는 진하게, 설명은 키 칸 폭에 맞춰 세로로 정렬하고 열 폭 cw 를 넘으면 … 로 줄인다.
+fn column_lines(secs: Slice<HelpSection>, cw: int) -> Slice<string> {
+  let (kw, _, _) = column_size(secs)
+  let key = lipgloss.NewStyle().Bold(true)
+  let mut out = Slice.new<string>()
+  for (i, s) in secs.enumerate() {
+    if i > 0 { out = out.append("") }
+    out = out.append(st_user().Render(ansi.Truncate(s.title, cw, "…")))
+    for e in s.keys {
+      let k = ansi.Truncate(e.key, cw, "…")
+      let d = ansi.Truncate(e.desc, max(cw - kw - HELP_KEY_GAP, 0), "…")
+      let pad = spaces(kw - ansi.StringWidth(k) + HELP_KEY_GAP)
+      out = out.append(key.Render(k) + pad + d)
+    }
+  }
+  out
+}
+
+/// 도움말 본문 줄들 (폭 max_w 안). 열은 HELP_COL_GAP 칸씩 띄워 나란히 놓는다.
+pub fn help_body(max_w: int) -> Slice<string> {
+  let cols = pick_columns(help_sections(), max_w)
+  let mut blocks = Slice.new<Slice<string>>()
+  let mut widths = Slice.new<int>()
+  let mut rows = 0
+  for c in cols {
+    let (_, natural, _) = column_size(c)
+    let cw = if cols.length() == 1 { min(natural, max_w) } else { natural }
+    let lines = column_lines(c, cw)
+    rows = max(rows, lines.length())
+    blocks = blocks.append(lines)
+    widths = widths.append(cw)
+  }
+  let mut out = Slice.new<string>()
+  for r in 0..rows {
+    let mut line = ""
+    for (i, b) in blocks.enumerate() {
+      let cell = if r < b.length() { b[r] } else { "" }
+      let last = i == blocks.length() - 1
+      line += cell
+      if !last {
+        line += spaces(widths[i] - ansi.StringWidth(cell) + HELP_COL_GAP)
+      }
+    }
+    out = out.append(line)
+  }
+  out
+}
+
+impl App {
+  /// 도움말 본문 폭 상한: 화면 폭에서 테두리와 여백을 뺀 값, 최대 120
+  fn help_max_width(self: Ref<Self>) -> int {
+    max(min(self.width - 6, 120), 20)
+  }
+
+  /// 도움말 본문과 상자 안에 보이는 줄 수 (위아래 테두리와 화면 여백 1줄씩을 뺀다)
+  fn help_rows(self: Ref<Self>) -> (Slice<string>, int) {
+    let body = help_body(self.help_max_width())
+    let h = max(min(body.length(), self.height - 4), 1)
+    (body, h)
+  }
+
+  /// 도움말 키: j/k 등은 상자 안 스크롤, 그 밖의 키는 닫기
+  pub fn on_help_key(self: mut Ref<Self>, k: string) {
+    let (body, h) = self.help_rows()
+    let max_top = max(body.length() - h, 0)
+    match k {
+      "j" | "down" => self.help_top = min(self.help_top + 1, max_top),
+      "k" | "up" => self.help_top = max(self.help_top - 1, 0),
+      "d" | "ctrl+d" | "ctrl+f" | "pgdown" | " " | "space" => self.help_top = min(
+        self.help_top + h,
+        max_top,
+      ),
+      "u" | "ctrl+u" | "ctrl+b" | "pgup" => self.help_top = max(
+        self.help_top - h,
+        0,
+      ),
+      "g" | "home" => self.help_top = 0,
+      "G" | "end" => self.help_top = max_top,
+      _ => {
+        self.help = false
+        self.help_top = 0
+      },
+    }
+  }
+
+  /// 도움말 상자. 제목은 위 테두리, 키 안내와 스크롤 위치는 아래 테두리에 둔다.
+  pub fn view_help(self: Ref<Self>) -> string {
+    let (body, h) = self.help_rows()
+    let top = min(self.help_top, max(body.length() - h, 0))
+    let end = min(top + h, body.length())
+    let scrolls = body.length() > h
+    let mut groups = Slice.new<Slice<Hint>>()
+    if scrolls { groups = groups.append([hint("scroll", "j k")]) }
+    groups = groups.append([hint("close", "esc")])
+    let pos = if scrolls { f"{top + 1}-{end}/{body.length()}" } else { "" }
+    let mut inner = 0
+    for l in body {
+      inner = max(inner, ansi.StringWidth(l))
+    }
+    framed_box("키 바인딩", body[top..end], inner, groups, pos)
+  }
+}

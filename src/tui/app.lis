@@ -3,6 +3,7 @@ import "go:github.com/atotto/clipboard"
 import "go:github.com/charmbracelet/bubbletea"
 import "go:github.com/charmbracelet/glamour"
 import "go:github.com/charmbracelet/lipgloss"
+import "go:github.com/charmbracelet/x/ansi"
 import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:path/filepath"
 import "go:strings"
@@ -54,6 +55,7 @@ pub struct App {
   pub width: int,
   pub height: int,
   pub help: bool,
+  help_top: int, // 도움말 상자 안 스크롤 위치
   pub status: string,
   status_gen: int, // 상태 메시지를 새로 띄울 때마다 증가 (만료 타이머 구분)
   pub quitting: bool,
@@ -196,13 +198,17 @@ impl App {
     if self.width < MIN_WIDTH || self.height < MIN_HEIGHT {
       return self.view_too_small()
     }
-    if self.help { return self.view_help() }
-    if let Some(plan) = self.modal { return self.view_modal(plan) }
-    if let Some(r) = self.renaming { return self.view_rename(r) }
-    match self.screen {
+    let modal = if self.help {
+      self.view_help()
+    } else if let Some(plan) = self.modal {
+      self.view_modal(plan)
+    } else if let Some(r) = self.renaming { self.view_rename(r) } else { "" }
+    let screen = match self.screen {
       Screen.List => self.view_list(),
       Screen.Conv => self.view_conv(),
     }
+    if modal == "" { return screen }
+    overlay(screen, modal, self.width, self.height)
   }
 
   fn on_resize(self: mut Ref<Self>, w: int, h: int) -> Option<tea.Cmd> {
@@ -249,7 +255,7 @@ impl App {
       return None
     }
     if self.help {
-      self.help = false
+      self.on_help_key(k)
       return None
     }
     if let Some(plan) = self.modal {
@@ -595,18 +601,22 @@ impl App {
     } else {
       "휴지통으로 이동"
     }
+    // 테두리와 여백(4칸)과 화면 여백을 빼고 경로를 줄인다
+    let w = max(min(90, self.width - 8), 16)
     lines = lines.append(st_warn().Render("세션 삭제") + "  " + mode)
-    lines = lines.append(clip(title, 70))
+    lines = lines.append(clip(title, min(70, w)))
     lines = lines.append("")
-    lines = lines.append(f"대상 ({self.opts.root} 기준):")
+    lines = lines.append(clip(f"대상 ({self.opts.root} 기준):", w))
     for item in plan.items {
       let rel = filepath.Rel(self.opts.root, item).unwrap_or(item)
       let suffix = if item == plan.items[0] { "" } else { "  (부속)" }
-      lines = lines.append("  " + clip(rel, 90) + suffix)
+      lines = lines.append(
+        "  " + clip(rel, w - 2 - ansi.StringWidth(suffix)) + suffix,
+      )
     }
     if !plan.purge {
       lines = lines.append("이동 위치:")
-      lines = lines.append("  " + clip(plan.trash_dir, 90))
+      lines = lines.append("  " + clip(plan.trash_dir, w - 2))
     }
     if let Some(s) = self.sessions.find(|s| s.id == plan.session_id) {
       if let Some(next) = s.continued_in {
@@ -626,14 +636,7 @@ impl App {
         90,
       )),
     }
-    let box = st_modal().Render(lines.join("\n"))
-    lipgloss.Place(
-      self.width,
-      self.height,
-      lipgloss.Center,
-      lipgloss.Center,
-      box,
-    )
+    st_modal().Render(lines.join("\n"))
   }
 
   // ---------- 대화 ----------
@@ -1020,25 +1023,6 @@ impl App {
       )
     }
     flags.join(" · ")
-  }
-
-  fn view_help(self: Ref<Self>) -> string {
-    let text = "cci 키 바인딩
-
-공통   ? 도움말  q 종료  ctrl+c 강제 종료
-이동   j/k ↓/↑  d/u 1/4 페이지  ctrl+d/u 반 페이지  ctrl+f/b PgDn/PgUp 페이지  g/G Home/End
-목록   enter/l/→ 열기  / 필터(제목, 첫 프롬프트, cwd, 브랜치, 날짜)  esc 필터 해제
-       D 삭제(확인 모달)  R 제목 변경  y claude --resume 복사  a 전체/현재 범위 전환  ctrl+r 새로고침
-대화   h/←/esc 목록으로  ]/[ 다음/이전 메시지  }/{ 다음/이전 프롬프트
-       / 검색  n/N 다음/이전 매치(검색 중) 또는 메시지
-       D 현재 세션 삭제  R 제목 변경  r 역할 순환(all, user, assistant)  t 도구 호출  T thinking  c 코드 변경  e 펼치기  P 디버그
-       F follow 토글  o 이어진 세션 열기  y resume 복사
-입력   ←/→ ctrl+b/f 한 글자  alt+b/f 단어  ctrl+a/e 처음/끝  ctrl+w 단어 지우기  ctrl+u/k 앞/뒤 지우기
-       ctrl+d 뒤 글자 지우기  ctrl+v 붙여넣기  (제목 변경, 필터, 검색 공통)
-표식   › 프롬프트  ● 응답, 도구 호출  ⎿ 도구 결과  ✗ 오류  ✻ thinking  ◆ 스크롤바의 프롬프트 위치
-
-아무 키나 누르면 닫힙니다."
-    st_box().Render(text)
   }
 }
 

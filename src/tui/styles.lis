@@ -125,3 +125,8 @@ pub fn st_box() -> lipgloss.Style {
     .BorderForeground(color("26", "39"))
     .Padding(0, 1)
 }
+
+/// 직접 그리는 테두리(framed_box)의 선 색. st_box 테두리와 같다.
+pub fn st_border() -> lipgloss.Style {
+  fg("26", "39")
+}

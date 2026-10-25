@@ -1,6 +1,5 @@
 // 세션 제목 변경 입력창 (R). 목록에서는 선택한 세션, 대화 화면에서는 현재 세션 (docs/decisions/0012).
 import "go:github.com/charmbracelet/bubbletea"
-import "go:github.com/charmbracelet/lipgloss"
 
 import "model"
 import "session"
@@ -82,13 +81,6 @@ impl App {
         w,
       ),
     ]
-    let box = st_box().Width(w + 2).Render(lines.join("\n"))
-    lipgloss.Place(
-      self.width,
-      self.height,
-      lipgloss.Center,
-      lipgloss.Center,
-      box,
-    )
+    st_box().Width(w + 2).Render(lines.join("\n"))
   }
 }

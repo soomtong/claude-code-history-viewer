@@ -1,0 +1,92 @@
+import "go:github.com/charmbracelet/x/ansi"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
+import "go:os"
+
+#[test("도움말 본문: 폭에 따라 1~3열, 줄은 폭을 넘지 않고 키와 설명이 세로로 정렬된다")]
+fn help_columns() {
+  for w in [20, 40, 74, 120] {
+    let body = help_body(w)
+    assert body.all(|l| ansi.StringWidth(l) <= w)
+  }
+  // 넓으면 3열: 첫 줄에 세 묶음 제목이 나란히
+  let wide = ansi.Strip(help_body(120)[0])
+  assert wide.contains("공통") && wide.contains("목록") && wide.contains("대화")
+  // 좁으면 1열: 모든 묶음이 위아래로
+  let narrow = help_body(40).map(ansi.Strip)
+  assert narrow[0] == "공통"
+  assert narrow.length() > help_body(120).length()
+  // 같은 열의 설명은 같은 칸에서 시작한다: 가장 긴 키(alt+b alt+f, 11칸) + 두 칸
+  assert narrow[1] == "?            도움말 열기 / 닫기"
+  assert narrow[3] == "ctrl+c       강제 종료"
+}
+
+#[test("테두리 상자: 위에 제목, 아래에 키 안내와 위치, 모든 줄 폭이 같다")]
+fn framed() {
+  let box = framed_box(
+    "제목",
+    ["가나다", "abc"],
+    20,
+    [[hint("close", "esc")]],
+    "1-2/9",
+  )
+  let lines = box.split("\n").map(ansi.Strip)
+  assert lines.length() == 4
+  assert lines[0].starts_with("╭─ 제목 ─")
+  assert lines[1] == "│ 가나다" + "              " + " │"
+  assert lines[3].starts_with("╰─ close esc ─")
+  assert lines[3].ends_with(" 1-2/9 ─╯")
+  assert lines.all(|l| ansi.StringWidth(l) == 24)
+}
+
+#[test("overlay: 배경 위 가운데에 상자, 화면 크기 유지, 넓은 글자 경계는 빈칸")]
+fn overlay_center() {
+  let bg = ["가나다라마바사아자차", "0123456789abcdefghij", "", "x"].join("\n")
+  let out = overlay(bg, "[  ]\n[  ]", 20, 5).split("\n").map(ansi.Strip)
+  assert out.length() == 5
+  assert out.all(|l| ansi.StringWidth(l) <= 20)
+  // 상자 높이 2, 화면 5 -> y=1, 폭 4 -> x=8
+  assert out[1] == "01234567[  ]cdefghij"
+  assert out[2] == "        [  ]"
+  assert out[0] == "가나다라마바사아자차"
+  // 화면보다 넓은 상자는 잘린다
+  let wide = overlay("", "0123456789", 6, 1)
+  assert ansi.StringWidth(ansi.Strip(wide)) == 6
+  // 넓은 글자가 상자 경계에 걸리면 빈칸으로 채운다 (x=3: 나 는 왼쪽, 다 는 오른쪽 경계에 걸림)
+  let ko = overlay("가나다라", "ab", 8, 1)
+  assert ansi.Strip(ko) == "가 ab 라"
+  assert ansi.StringWidth(ansi.Strip(ko)) == 8
+}
+
+#[test("도움말 모달: 현재 화면 위에 뜨고, j/k/G 로 스크롤, 그 밖의 키로 닫힌다")]
+fn help_modal() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(80, 24))
+  press(&app, ["?"])
+  assert app.help
+  let s = ansi.Strip(app.View())
+  let lines = s.split("\n")
+  assert lines.length() == 24
+  // 배경(헤더)이 그대로 보이고 그 위에 상자
+  assert lines[0].contains("CCi")
+  assert s.contains("╭─ 키 바인딩 ─")
+  assert s.contains("scroll j k | close esc")
+  assert s.contains("1-20/")
+  press(&app, ["j", "j"])
+  assert app.help_top == 2
+  press(&app, ["k"])
+  assert app.help_top == 1
+  press(&app, ["G"])
+  let (body, h) = app.help_rows()
+  assert app.help_top == body.length() - h
+  press(&app, ["g"])
+  assert app.help_top == 0
+  // 그 밖의 키는 닫기만 한다 (q 로 종료되지 않음)
+  press(&app, ["q"])
+  assert !app.help
+  assert !app.quitting
+  assert !ansi.Strip(app.View()).contains("키 바인딩")
+}
