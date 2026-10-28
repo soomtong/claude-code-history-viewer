@@ -1,6 +1,7 @@
 // cci: Claude Code 대화 복기용 TUI. CLI 인자, 설정, 모드 분기.
+import "go:charm.land/bubbletea/v2"
 import "go:fmt"
-import "go:github.com/charmbracelet/bubbletea"
+import "go:github.com/charmbracelet/colorprofile"
 import "go:os"
 import "go:path/filepath"
 import "go:strings"
@@ -159,12 +160,14 @@ fn main() {
     print_list(opts)
     return
   }
-  let opts = tui.Options {
-    theme: tui.setup_colors(opts.theme, cli.no_color),
-    ..opts
-  }
+  let opts = tui.Options { theme: tui.setup_colors(opts.theme), ..opts }
   let mut app = tui.new_app(opts)
-  let mut program = tea.NewProgram(&app, tea.WithAltScreen())
+  // 색 지원 수준(NO_COLOR, TERM=dumb 포함)은 Bubble Tea 가 판단해 출력 단계에서 낮춘다
+  let mut program = if cli.no_color {
+    tea.NewProgram(&app, tea.WithColorProfile(colorprofile.Ascii))
+  } else {
+    tea.NewProgram(&app)
+  }
   if opts.watch {
     let handle = watch.start(app.watch_dirs(), |paths| program.Send(
       tui.FilesChanged { paths },

@@ -1,4 +1,4 @@
-import "go:github.com/charmbracelet/lipgloss"
+import "go:charm.land/lipgloss/v2"
 import "go:github.com/charmbracelet/x/ansi"
 import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:os"
@@ -84,7 +84,7 @@ fn list_view() {
   }
   let mut app = new_app(opts(root))
   let _ = app.Update(shim.WindowSize(100, 30))
-  let s = ansi.Strip(app.View())
+  let s = ansi.Strip(app.frame())
   assert s.contains(" CCi ")
   // 현재 폴더 범위는 라벨 없이 기호와 경로만
   assert s.contains("⌂ /work/demo-app")
@@ -98,7 +98,7 @@ fn list_view() {
     assert false
     return
   }
-  assert ansi.Strip(app.View()).contains("┃ " + sel.title)
+  assert ansi.Strip(app.frame()).contains("┃ " + sel.title)
 }
 
 #[test("대화 화면: 프롬프트 ›, 응답 ●, 도구 결과는 빈 줄 없이 붙는다")]
@@ -146,7 +146,7 @@ fn conv_frame() {
   let mut app = new_app(opts(root))
   let _ = app.Update(shim.WindowSize(80, 20))
   press(&app, ["enter"])
-  let lines = ansi.Strip(app.View()).split("\n")
+  let lines = ansi.Strip(app.frame()).split("\n")
   assert lines.length() == 20
   assert lines[2].starts_with(" ───")
   assert lines[3].starts_with(" › Add a greet function")

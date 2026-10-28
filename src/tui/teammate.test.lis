@@ -37,7 +37,7 @@ fn teammate_collapsed() {
     let _ = os.RemoveAll(root)
   }
   let mut app = open_team(root)
-  let s = ansi.Strip(app.View())
+  let s = ansi.Strip(app.frame())
   assert s.contains("⇠ outbox-g9 · G9 보고: 7 포함 · 1 제외  (+5 lines, e)")
   assert s.contains(
     "⇠ outbox-g5 · G5 \"outbox\" 완료: 포함 6 · 제외 2  (+2 lines, e)",
@@ -55,7 +55,7 @@ fn teammate_collapsed() {
   }
   // 펼치기
   press(&app, ["e"])
-  let open = ansi.Strip(app.View())
+  let open = ansi.Strip(app.frame())
   assert open.contains("G9 작업 완료. 산출물은 /tmp/outbox/ 에 7개.")
   assert open.contains("- 제외 DEFECT-C.md — Zig 전용.")
   assert !open.contains("lines, e)")
@@ -70,16 +70,16 @@ fn teammate_filter() {
   let mut app = open_team(root)
   // 사람 프롬프트 2개만 프롬프트 칸
   assert app.spans.filter(|sp| sp.prompt).length() == 2
-  assert ansi.Strip(app.View()).contains("Prompts 2")
+  assert ansi.Strip(app.frame()).contains("Prompts 2")
   press(&app, ["r"])
   assert app.role == RoleFilter.User
-  let u = ansi.Strip(app.View())
+  let u = ansi.Strip(app.frame())
   assert !u.contains("outbox-g9")
   assert !u.contains("outbox-g5")
   assert u.contains("보고서를 요약해 줘")
   press(&app, ["r"])
   assert app.role == RoleFilter.Assistant
-  assert !ansi.Strip(app.View()).contains("outbox-g9")
+  assert !ansi.Strip(app.frame()).contains("outbox-g9")
 }
 
 fn strings_blank(l: string) -> bool {
@@ -102,15 +102,15 @@ fn teammate_protocol_view() {
     time.Hour,
   )
   let mut app = open_team(root)
-  let s = ansi.Strip(app.View())
+  let s = ansi.Strip(app.frame())
   assert s.contains(
     "⇠ outbox-g9 · idle notification · available  (+6 lines, e)",
   )
   assert !s.contains("This came from another Claude session")
   assert !s.contains("{\"type\"")
-  assert ansi.Strip(app.View()).contains("Prompts 1")
+  assert ansi.Strip(app.frame()).contains("Prompts 1")
   press(&app, ["e"])
-  let open = ansi.Strip(app.View())
+  let open = ansi.Strip(app.frame())
   assert open.contains(
     "   G9 담당 8개 문서 작업을 마치고 team-lead 에게 보고했습니다.",
   )

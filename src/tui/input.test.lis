@@ -46,7 +46,7 @@ fn rename_keymap() {
   }
   assert r.input == "hello world"
   // 커서는 "hello " 뒤
-  assert ansi.Strip(app.View()).contains("hello ▏world")
+  assert ansi.Strip(app.frame()).contains("hello ▏world")
   press(&app, ["ctrl+k"])
   assert app.renaming.map_or("", |x| x.input) == "hello "
   press(&app, ["ctrl+e", "big world", "alt+b", "ctrl+w"])
@@ -91,5 +91,5 @@ fn search_paste() {
   press(&app, ["ctrl+u", "greet"])
   assert app.search == "greet"
   assert !app.matches.is_empty()
-  assert ansi.Strip(app.View()).contains("/greet▏")
+  assert ansi.Strip(app.frame()).contains("/greet▏")
 }

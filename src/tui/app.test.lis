@@ -1,4 +1,5 @@
-import "go:github.com/charmbracelet/bubbletea"
+import "go:charm.land/bubbletea/v2"
+import "go:github.com/charmbracelet/x/ansi"
 import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:os"
 import "go:path/filepath"
@@ -88,7 +89,7 @@ fn list_and_filter() {
   assert app.rows.length() == 2
   press(&app, ["a"])
   assert app.sessions.length() == 3
-  assert app.View().contains("All projects")
+  assert ansi.Strip(app.frame()).contains("All projects")
 }
 
 #[test("대화: 열기, 메시지 점프, 뒤로")]
@@ -103,7 +104,7 @@ fn open_and_navigate() {
   assert app.screen == Screen.Conv
   // 기본 토글: 프롬프트 2 + 텍스트 있는 assistant 2
   assert app.spans.length() == 4
-  assert app.View().contains("Add a greet function")
+  assert ansi.Strip(app.frame()).contains("Add a greet function")
   press(&app, ["]"])
   assert app.vp.YOffset() == app.spans[1].start
   press(&app, ["}"])
@@ -129,7 +130,7 @@ fn empty_scope_hint() {
   o.cwd = "/work/nowhere"
   let mut app = new_app(o)
   assert app.sessions.length() == 0
-  assert app.View().contains("--parent")
+  assert ansi.Strip(app.frame()).contains("--parent")
 }
 
 #[test("q 로 종료")]
@@ -190,7 +191,7 @@ fn delete_modal() {
   }
   press(&app, ["D"])
   assert app.modal.is_some()
-  assert app.View().contains("Delete y | Cancel other keys")
+  assert ansi.Strip(app.frame()).contains("Delete y | Cancel other keys")
   press(&app, ["enter"])
   assert app.modal.is_none()
   assert os.Stat(target.path).is_ok()
@@ -198,7 +199,7 @@ fn delete_modal() {
   assert os.Stat(target.path).is_ok()
   // 열람 중이면 차단
   press(&app, ["enter", "h", "D"])
-  assert app.View().contains("현재 열람 중")
+  assert ansi.Strip(app.frame()).contains("현재 열람 중")
   press(&app, ["y"])
   assert os.Stat(target.path).is_ok()
   // ctrl+r 로 열람 해제 후 삭제
@@ -229,7 +230,7 @@ fn delete_from_conv() {
   // 취소하면 대화 화면에 남는다
   press(&app, ["enter", "D"])
   assert app.modal.is_some()
-  assert !app.View().contains("현재 열람 중")
+  assert !ansi.Strip(app.frame()).contains("현재 열람 중")
   press(&app, ["n"])
   assert app.screen == Screen.Conv
   assert os.Stat(target.path).is_ok()
@@ -258,7 +259,7 @@ fn rename_title() {
   let before = os.ReadFile(target.path).unwrap_or([]) as string
   press(&app, ["R"])
   assert app.renaming.is_some()
-  assert app.View().contains("세션 제목 변경")
+  assert ansi.Strip(app.frame()).contains("세션 제목 변경")
   press(&app, ["x", "esc"])
   assert app.renaming.is_none()
   assert (os.ReadFile(target.path).unwrap_or([]) as string) == before
@@ -271,12 +272,12 @@ fn rename_title() {
   }
   assert sel.id == target.id
   assert sel.title == "목록 제목"
-  assert app.View().contains("목록 제목")
+  assert ansi.Strip(app.frame()).contains("목록 제목")
   // 입력 중에는 단축키가 동작하지 않는다 (q 로 종료되지 않음)
   press(&app, ["enter", "R", "backspace", "backspace", "q", "enter"])
   assert !app.quitting
   assert app.current.title == "목록 q"
-  assert app.View().contains("목록 q")
+  assert ansi.Strip(app.frame()).contains("목록 q")
   // 새로고침은 ctrl+r
   press(&app, ["h", "ctrl+r"])
   assert app.status.contains("Refreshed")

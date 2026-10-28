@@ -67,7 +67,7 @@ fn help_modal() {
   let _ = app.Update(shim.WindowSize(80, 24))
   press(&app, ["?"])
   assert app.help
-  let s = ansi.Strip(app.View())
+  let s = ansi.Strip(app.frame())
   let lines = s.split("\n")
   assert lines.length() == 24
   // 배경(헤더)이 그대로 보이고 그 위에 상자
@@ -88,5 +88,5 @@ fn help_modal() {
   press(&app, ["q"])
   assert !app.help
   assert !app.quitting
-  assert !ansi.Strip(app.View()).contains("키 바인딩")
+  assert !ansi.Strip(app.frame()).contains("키 바인딩")
 }

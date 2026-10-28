@@ -1,7 +1,7 @@
 // 한 줄 입력(제목 변경, 목록 필터, 대화 검색)의 공용 부분 (docs/decisions/0013).
 // 편집 키맵은 bubbles textinput(shim.TextInput)이 맡고, 화면은 여기서 ▏ 커서로 그린다.
 // 세 입력은 동시에 열리지 않으므로 App.input 하나를 함께 쓴다.
-import "go:github.com/charmbracelet/bubbletea"
+import "go:charm.land/bubbletea/v2"
 import "go:github.com/charmbracelet/x/ansi"
 
 /// value 의 pos(룬) 자리에 ▏ 커서를 넣고, 폭 width 안에서 커서가 보이게 자른다.

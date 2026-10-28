@@ -10,7 +10,7 @@ fn open_basic(root: string) -> mut App {
 }
 
 fn screen(app: mut Ref<App>) -> string {
-  ansi.Strip(app.View())
+  ansi.Strip(app.frame())
 }
 
 #[test("역할 필터 r 순환: all -> user -> assistant -> all")]

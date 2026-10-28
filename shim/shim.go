@@ -6,13 +6,29 @@
 package shim
 
 import (
+	"image/color"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/cursor"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
+
+// darkBackground 는 화면 색을 고를 배경 밝기다. 프로그램 시작 전에 한 번 정한다 (docs/decisions/0021).
+var darkBackground = true
+
+// SetDarkBackground 는 배경 밝기를 정한다. Lisette 에는 바꿀 수 있는 전역이 없어 여기에 둔다.
+func SetDarkBackground(dark bool) { darkBackground = dark }
+
+func DarkBackground() bool { return darkBackground }
+
+// Adaptive 는 지금 배경 밝기에 맞는 색을 고른다. light/dark 는 lipgloss.Color 문자열(256색 번호 등)이다.
+func Adaptive(light, dark string) color.Color {
+	return lipgloss.LightDark(darkBackground)(lipgloss.Color(light), lipgloss.Color(dark))
+}
 
 // TextInput 은 bubbles textinput 을 편집 엔진으로만 감싼 불투명 타입이다.
 // 키맵(ctrl+a/e/k/u/w, alt+b/f 등)과 붙여넣기 정리는 textinput 이 하고,
@@ -21,11 +37,12 @@ type TextInput struct {
 	ti textinput.Model
 }
 
-// NewTextInput 은 포커스된 빈 입력의 포인터를 돌려준다. 커서는 그리지 않으므로 깜빡임도 끈다.
+// NewTextInput 은 포커스된 빈 입력의 포인터를 돌려준다.
+// 가상 커서를 끄면 커서를 그리지도 깜빡이지도 않는다(실제 커서는 View 에 넘기지 않는다).
 func NewTextInput() *TextInput {
 	ti := textinput.New()
 	ti.Prompt = ""
-	ti.Cursor.SetMode(cursor.CursorHide)
+	ti.SetVirtualCursor(false)
 	ti.Focus()
 	return &TextInput{ti: ti}
 }
@@ -41,7 +58,7 @@ func (t *TextInput) Value() string { return t.ti.Value() }
 // Position 은 룬 단위 커서 위치다.
 func (t *TextInput) Position() int { return t.ti.Position() }
 
-// Update 는 키와 붙여넣기(ctrl+v 의 클립보드 결과) 메시지를 넘긴다. nil Cmd 가능.
+// Update 는 키, 붙여넣기(PasteMsg), ctrl+v 의 클립보드 결과 메시지를 넘긴다. nil Cmd 가능.
 func (t *TextInput) Update(msg tea.Msg) tea.Cmd {
 	m, cmd := t.ti.Update(msg)
 	t.ti = m
@@ -53,19 +70,18 @@ type Viewport struct {
 	vp viewport.Model
 }
 
-// NewViewport 는 쓰기 가능한 viewport 포인터를 돌려준다.
+// NewViewport 는 쓰기 가능한 viewport 포인터를 돌려준다. 마우스 휠은 기본으로 켜져 있다.
 func NewViewport(width, height int) *Viewport {
-	vp := viewport.New(width, height)
-	vp.MouseWheelEnabled = true
+	vp := viewport.New(viewport.WithWidth(width), viewport.WithHeight(height))
 	return &Viewport{vp: vp}
 }
 
 func (v *Viewport) SetContent(s string)       { v.vp.SetContent(s) }
-func (v *Viewport) SetSize(width, height int) { v.vp.Width = width; v.vp.Height = height }
-func (v *Viewport) Width() int                { return v.vp.Width }
-func (v *Viewport) Height() int               { return v.vp.Height }
+func (v *Viewport) SetSize(width, height int) { v.vp.SetWidth(width); v.vp.SetHeight(height) }
+func (v *Viewport) Width() int                { return v.vp.Width() }
+func (v *Viewport) Height() int               { return v.vp.Height() }
 func (v *Viewport) View() string              { return v.vp.View() }
-func (v *Viewport) YOffset() int              { return v.vp.YOffset }
+func (v *Viewport) YOffset() int              { return v.vp.YOffset() }
 func (v *Viewport) SetYOffset(n int)          { v.vp.SetYOffset(n) }
 func (v *Viewport) GotoTop()                  { v.vp.GotoTop() }
 func (v *Viewport) GotoBottom()               { v.vp.GotoBottom() }
@@ -87,82 +103,53 @@ func (v *Viewport) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// Key 는 헤드리스 테스트와 program.Send 용 KeyMsg 를 만든다.
-// "enter", "esc", "up", "ctrl+c" 같은 특수키 이름 또는 일반 문자열(룬)을 받는다.
-func Key(name string) tea.KeyMsg {
-	switch strings.ToLower(name) {
-	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
-	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
-	case "up":
-		return tea.KeyMsg{Type: tea.KeyUp}
-	case "down":
-		return tea.KeyMsg{Type: tea.KeyDown}
-	case "left":
-		return tea.KeyMsg{Type: tea.KeyLeft}
-	case "right":
-		return tea.KeyMsg{Type: tea.KeyRight}
-	case "backspace":
-		return tea.KeyMsg{Type: tea.KeyBackspace}
-	case "home":
-		return tea.KeyMsg{Type: tea.KeyHome}
-	case "end":
-		return tea.KeyMsg{Type: tea.KeyEnd}
-	case "pgdown":
-		return tea.KeyMsg{Type: tea.KeyPgDown}
-	case "pgup":
-		return tea.KeyMsg{Type: tea.KeyPgUp}
-	case "ctrl+c":
-		return tea.KeyMsg{Type: tea.KeyCtrlC}
-	case "ctrl+d":
-		return tea.KeyMsg{Type: tea.KeyCtrlD}
-	case "ctrl+u":
-		return tea.KeyMsg{Type: tea.KeyCtrlU}
-	case "ctrl+f":
-		return tea.KeyMsg{Type: tea.KeyCtrlF}
-	case "ctrl+b":
-		return tea.KeyMsg{Type: tea.KeyCtrlB}
-	case "ctrl+r":
-		return tea.KeyMsg{Type: tea.KeyCtrlR}
-	case "ctrl+a":
-		return tea.KeyMsg{Type: tea.KeyCtrlA}
-	case "ctrl+e":
-		return tea.KeyMsg{Type: tea.KeyCtrlE}
-	case "ctrl+k":
-		return tea.KeyMsg{Type: tea.KeyCtrlK}
-	case "ctrl+w":
-		return tea.KeyMsg{Type: tea.KeyCtrlW}
-	case "ctrl+h":
-		return tea.KeyMsg{Type: tea.KeyCtrlH}
-	case "delete":
-		return tea.KeyMsg{Type: tea.KeyDelete}
-	case " ", "space":
-		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
-	}
-	if r, ok := strings.CutPrefix(name, "alt+"); ok && r != "" {
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(r), Alt: true}
-	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
+var specialKeys = map[string]rune{
+	"enter":     tea.KeyEnter,
+	"esc":       tea.KeyEscape,
+	"up":        tea.KeyUp,
+	"down":      tea.KeyDown,
+	"left":      tea.KeyLeft,
+	"right":     tea.KeyRight,
+	"backspace": tea.KeyBackspace,
+	"home":      tea.KeyHome,
+	"end":       tea.KeyEnd,
+	"pgdown":    tea.KeyPgDown,
+	"pgup":      tea.KeyPgUp,
+	"delete":    tea.KeyDelete,
+	"tab":       tea.KeyTab,
 }
 
-// SplitRunes 는 한 번에 읽힌 여러 글자 KeyMsg 를 글자마다 하나씩 나눈다.
-// 빠르게 연타하면(또는 앱이 바쁜 동안 입력이 쌓이면) Bubble Tea 가 "LL", "jj" 를 KeyMsg 하나로 넘긴다.
-// 붙여넣기(Paste)나 한 글자 키, 글자가 아닌 키는 그대로 하나만 돌려준다 (docs/decisions/0019).
-func SplitRunes(k tea.KeyMsg) []tea.KeyMsg {
-	if k.Type != tea.KeyRunes || k.Paste || len(k.Runes) < 2 {
-		return []tea.KeyMsg{k}
+// Key 는 헤드리스 테스트와 program.Send 용 KeyPressMsg 를 만든다.
+// "enter", "esc", "up" 같은 특수키 이름, "ctrl+<글자>", "alt+<글자>", 또는 글자 하나를 받는다.
+// 글자는 터미널 입력을 해석할 때와 같은 모양으로 만든다(대문자는 소문자 Code + shift).
+func Key(name string) tea.KeyPressMsg {
+	if code, ok := specialKeys[strings.ToLower(name)]; ok {
+		return tea.KeyPressMsg{Code: code}
 	}
-	out := make([]tea.KeyMsg, 0, len(k.Runes))
-	for _, r := range k.Runes {
-		out = append(out, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: k.Alt})
+	if name == " " || strings.EqualFold(name, "space") {
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	}
-	return out
+	if r, ok := strings.CutPrefix(strings.ToLower(name), "ctrl+"); ok && utf8.RuneCountInString(r) == 1 {
+		c, _ := utf8.DecodeRuneInString(r)
+		return tea.KeyPressMsg{Code: c, Mod: tea.ModCtrl}
+	}
+	if r, ok := strings.CutPrefix(name, "alt+"); ok && utf8.RuneCountInString(r) == 1 {
+		c, _ := utf8.DecodeRuneInString(r)
+		return tea.KeyPressMsg{Code: c, Mod: tea.ModAlt}
+	}
+	c, _ := utf8.DecodeRuneInString(name)
+	k := tea.KeyPressMsg{Code: c, Text: name}
+	if unicode.IsUpper(c) {
+		k.Code = unicode.ToLower(c)
+		k.ShiftedCode = c
+		k.Mod = tea.ModShift
+	}
+	return k
 }
 
-// Paste 는 터미널 붙여넣기(bracketed paste)로 들어온 KeyMsg 를 만든다.
-func Paste(text string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true}
+// Paste 는 터미널 붙여넣기(bracketed paste)로 들어온 PasteMsg 를 만든다.
+func Paste(text string) tea.PasteMsg {
+	return tea.PasteMsg{Content: text}
 }
 
 // WindowSize 는 테스트용 WindowSizeMsg 를 만든다.

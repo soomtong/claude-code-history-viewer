@@ -1,3 +1,4 @@
+import "go:github.com/charmbracelet/x/ansi"
 import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:os"
 import "go:path/filepath"
@@ -52,7 +53,7 @@ fn follows_new_lines() {
   let _ = app.Update(FilesChanged { paths: [path] })
   assert app.vp.YOffset() == 0
   assert app.new_count == 2
-  assert app.View().contains("New 2 (G)")
+  assert ansi.Strip(app.frame()).contains("New 2 (G)")
   press(&app, ["G"])
   assert app.new_count == 0
 }
