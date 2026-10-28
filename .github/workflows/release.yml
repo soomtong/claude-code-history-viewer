@@ -12,9 +12,9 @@ permissions:
   contents: write
 
 env:
-  LISETTE_VERSION: 0.12.4
+  LISETTE_VERSION: 0.12.5
   # lisette-x86_64-unknown-linux-musl.tar.xz 의 sha256 (버전을 올리면 함께 갱신)
-  LISETTE_SHA256: 85c81ed6fff82bb8532b9b132d832631d4cb3bafbd22f77f4807521373d6e48b
+  LISETTE_SHA256: 3926cbf7825b3f9ef8e7c6c4b1d06082ccba4adf86e44e9bd68242722254e2de
 
 jobs:
   release:
