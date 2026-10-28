@@ -66,35 +66,18 @@ fn adjacent_outside_scope() {
   assert app.current.path == other
 }
 
-#[test("연타로 뭉친 글자는 하나씩 처리하고, 입력창과 붙여넣기는 그대로 넣는다")]
-fn burst_keys() {
+#[test("붙여넣기는 키가 아니다: 목록에서는 무시하고 입력창에는 그대로 넣는다")]
+fn paste_is_not_keys() {
   let root = make_root()
   defer {
     let _ = os.RemoveAll(root)
   }
   let mut app = new_app(opts(root))
   let _ = app.Update(shim.WindowSize(100, 30))
-  // 목록: "jj" 를 키 하나로 받아도 두 칸 내려간다 (항목 2개라 끝에서 멈춤)
-  let _ = app.Update(shim.Key("jk"))
-  assert app.cursor == 0
-  let _ = app.Update(shim.Key("jj"))
-  assert app.cursor == 1
-  // 대화: "HH" 도 하나씩 (B 에서 시작해 A, 그 다음은 끝 알림)
-  press(&app, ["enter"])
-  assert app.current.id == SID_B
-  let _ = app.Update(shim.Key("HH"))
-  assert app.current.id == SID_A
-  assert app.status == "No newer session"
-  // 입력창에서는 뭉친 글자를 그대로 넣는다
-  press(&app, ["h", "/"])
-  let _ = app.Update(shim.Key("gre"))
-  assert app.filter == "gre"
-  press(&app, ["esc"])
-  // 붙여넣기는 나누지 않는다 (목록에서 붙여넣은 "jj" 는 키가 아니다)
   let before = app.cursor
   let _ = app.Update(shim.Paste("jj"))
   assert app.cursor == before
-  // 뭉친 글자 중 q 에서 종료하면 뒤 글자는 처리하지 않는다
-  let _ = app.Update(shim.Key("qj"))
-  assert app.quitting
+  press(&app, ["/"])
+  let _ = app.Update(shim.Paste("gre"))
+  assert app.filter == "gre"
 }

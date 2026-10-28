@@ -1,6 +1,6 @@
 // 메시지 단위 렌더링. 결과 문자열은 메시지 id + 폭 + 토글 조합으로 캐시된다 (cache.lis).
-import "go:github.com/charmbracelet/glamour"
-import "go:github.com/charmbracelet/lipgloss"
+import "go:charm.land/glamour/v2"
+import "go:charm.land/lipgloss/v2"
 import "go:github.com/charmbracelet/x/ansi"
 import "go:strings"
 import "go:time"

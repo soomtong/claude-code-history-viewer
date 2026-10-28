@@ -1,8 +1,8 @@
 // Bubble Tea 모델. 화면: 세션 목록, 대화 뷰, 도움말, 삭제 확인 모달.
 import "go:github.com/atotto/clipboard"
-import "go:github.com/charmbracelet/bubbletea"
-import "go:github.com/charmbracelet/glamour"
-import "go:github.com/charmbracelet/lipgloss"
+import "go:charm.land/bubbletea/v2"
+import "go:charm.land/glamour/v2"
+import "go:charm.land/lipgloss/v2"
 import "go:github.com/charmbracelet/x/ansi"
 import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:path/filepath"
@@ -153,7 +153,7 @@ impl App {
       return (self, None)
     }
     let before = self.status
-    let is_key = assert_type<tea.KeyMsg>(msg).is_some()
+    let is_key = assert_type<tea.KeyPressMsg>(msg).is_some()
     let cmd = self.dispatch(msg)
     // 키가 띄운 메시지는 같은 글이어도 타이머를 다시 건다. 그 밖의 메시지는 글이 바뀔 때만.
     if self.status == "" || (!is_key && self.status == before) {
@@ -178,7 +178,9 @@ impl App {
       if done.generation == self.resize_gen && self.has_conv { self.relayout() }
       return None
     }
-    if let Some(key) = assert_type<tea.KeyMsg>(msg) { return self.on_keys(key) }
+    if let Some(key) = assert_type<tea.KeyPressMsg>(msg) {
+      return self.on_key(key)
+    }
     if let Some(changed) = assert_type<FilesChanged>(msg) {
       self.on_files(changed.paths)
       return None
@@ -192,8 +194,16 @@ impl App {
     None
   }
 
+  /// 화면 전체를 대체 화면(alt screen)에 그린다. 내용은 `frame`.
   #[allow(non_snake_case_function)]
-  pub fn View(self: mut Ref<Self>) -> string {
+  pub fn View(self: mut Ref<Self>) -> tea.View {
+    let mut v = tea.NewView(self.frame())
+    v.AltScreen = true
+    v
+  }
+
+  /// 지금 화면의 문자열. 테스트는 이것을 본다.
+  pub fn frame(self: mut Ref<Self>) -> string {
     if self.quitting { return "" }
     if self.width < MIN_WIDTH || self.height < MIN_HEIGHT {
       return self.view_too_small()
@@ -239,20 +249,8 @@ impl App {
 
   // ---------- 키 ----------
 
-  /// 연타로 뭉쳐 들어온 글자("LL", "jj")는 하나씩 처리한다. 입력창에서는 뭉친 그대로 넣는다 (0019).
-  fn on_keys(self: mut Ref<Self>, key: tea.KeyMsg) -> Option<tea.Cmd> {
-    if self.editing() { return self.on_key(key) }
-    let keys = shim.SplitRunes(key)
-    if keys.length() == 1 { return self.on_key(key) }
-    let mut cmds = Slice.new<tea.Cmd>()
-    for k in keys {
-      if let Some(c) = self.on_key(k) { cmds = cmds.append(c) }
-      if self.quitting { break }
-    }
-    tea.Batch(cmds...)
-  }
-
-  pub fn on_key(self: mut Ref<Self>, key: tea.KeyMsg) -> Option<tea.Cmd> {
+  /// Bubble Tea v2 는 연타해도 글자마다 키 이벤트를 따로 보낸다 (0019, 0021).
+  pub fn on_key(self: mut Ref<Self>, key: tea.KeyPressMsg) -> Option<tea.Cmd> {
     let k = key.String()
     self.status = ""
     if k == "ctrl+c" {
@@ -284,7 +282,7 @@ impl App {
 
   fn on_list_key(
     self: mut Ref<Self>,
-    key: tea.KeyMsg,
+    key: tea.KeyPressMsg,
     k: string,
   ) -> Option<tea.Cmd> {
     if self.filter_editing {
@@ -350,7 +348,7 @@ impl App {
 
   fn on_conv_key(
     self: mut Ref<Self>,
-    key: tea.KeyMsg,
+    key: tea.KeyPressMsg,
     k: string,
   ) -> Option<tea.Cmd> {
     if self.search_editing { return self.on_search_key(key, k) }
@@ -740,17 +738,12 @@ impl App {
     }
     if self.md.is_some() && self.md_width == width { return }
     self.cache = Map.new<string, string>()
-    let style = if self.opts.theme == "auto" {
-      glamour.WithAutoStyle()
-    } else {
-      glamour.WithStandardStyle(self.opts.theme)
-    }
-    // glamour 는 기본이 TrueColor 라 터미널 색 지원 수준과 NO_COLOR 를 따르도록 lipgloss 판단을 넘긴다
+    // glamour 는 TrueColor 로 그리고, 터미널 색 지원 수준과 NO_COLOR 에 맞춰 낮추는 일은 Bubble Tea 가 한다 (0021)
+    let theme = resolve_theme(self.opts.theme, shim.DarkBackground())
     self.md = glamour
       .NewTermRenderer(
-        style,
+        glamour.WithStandardStyle(theme),
         glamour.WithWordWrap(max(width - 4, 10)),
-        glamour.WithColorProfile(lipgloss.ColorProfile()),
       )
       .ok()
     self.md_width = width

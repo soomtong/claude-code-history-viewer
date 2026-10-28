@@ -1,6 +1,6 @@
 // 화면 틀: 상단 헤더 띠, 하단 키 힌트 줄, 목록의 날짜 묶음 (docs/decisions/0011, 0015).
 // 띠는 왼쪽(내용)과 오른쪽(상태)으로 나누고, 좁으면 왼쪽부터 줄인다.
-import "go:github.com/charmbracelet/lipgloss"
+import "go:charm.land/lipgloss/v2"
 import "go:github.com/charmbracelet/x/ansi"
 import "go:strings"
 import "go:time"

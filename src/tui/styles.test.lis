@@ -1,7 +1,8 @@
-import "go:github.com/charmbracelet/lipgloss"
-import "go:github.com/muesli/termenv"
+import "go:github.com/charmbracelet/colorprofile"
+import "go:github.com/charmbracelet/x/ansi"
 import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:os"
+import "go:strings"
 
 #[test("auto 테마만 배경 밝기에 따라 dark/light 로 바뀐다")]
 fn theme_resolution() {
@@ -19,29 +20,48 @@ fn too_small() {
   }
   let mut app = new_app(opts(root))
   let _ = app.Update(shim.WindowSize(MIN_WIDTH - 1, 10))
-  assert app.View().contains("Window too small")
+  assert ansi.Strip(app.frame()).contains("Window too small")
   press(&app, ["D", "enter"])
   assert app.modal.is_none()
   assert app.screen == Screen.List
   // 다시 커지면 원래 화면
   let _ = app.Update(shim.WindowSize(80, 20))
-  assert !app.View().contains("Window too small")
+  assert !ansi.Strip(app.frame()).contains("Window too small")
   let _ = app.Update(shim.WindowSize(80, MIN_HEIGHT - 1))
-  assert app.View().contains("Window too small")
+  assert ansi.Strip(app.frame()).contains("Window too small")
   press(&app, ["q"])
   assert app.quitting
 }
 
-#[test("glamour 도 lipgloss 색 프로필을 따른다 (색 없음이면 색 코드 없음)")]
+#[test("색 없음(Ascii)이면 glamour 출력까지 출력 단계에서 색 코드가 빠진다")]
 fn markdown_follows_color_profile() {
   let root = make_root()
   defer {
     let _ = os.RemoveAll(root)
   }
-  lipgloss.SetColorProfile(termenv.Ascii)
   let mut app = new_app(Options { plain: false, ..opts(root) })
   let _ = app.Update(shim.WindowSize(120, 200))
   press(&app, ["enter"])
   assert app.md_renders > 0
-  assert !app.View().contains("[38;")
+  let frame = app.frame()
+  assert frame.contains("[38;")
+  // Bubble Tea 가 --no-color(WithColorProfile(Ascii)) 에서 쓰는 것과 같은 변환
+  let mut out = strings.Builder { .. }
+  let mut w = colorprofile.Writer {
+    Forward: Some(&out),
+    Profile: colorprofile.Ascii,
+  }
+  let _ = w.WriteString(frame)
+  assert !out.String().contains("[38;")
+  assert ansi.Strip(out.String()) == ansi.Strip(frame)
+}
+
+#[test("배경 밝기에 따라 다른 색을 고른다")]
+fn adaptive_color() {
+  shim.SetDarkBackground(false)
+  let light = st_title().Render("x")
+  shim.SetDarkBackground(true)
+  let dark = st_title().Render("x")
+  assert light != dark
+  assert dark.contains("212")
 }

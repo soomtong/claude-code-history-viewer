@@ -1,6 +1,6 @@
 // 대화 뷰 검색 (Phase 3). 하이라이트 치환은 하지 않고, ANSI 를 벗긴 줄에서 매치 줄을 찾아
 // 그 위치로 점프하고 "i/m" 카운트를 보여준다 (docs/decisions/0007).
-import "go:github.com/charmbracelet/bubbletea"
+import "go:charm.land/bubbletea/v2"
 import "go:github.com/charmbracelet/x/ansi"
 import "go:strings"
 
@@ -48,7 +48,7 @@ impl App {
 
   pub fn on_search_key(
     self: mut Ref<Self>,
-    key: tea.KeyMsg,
+    key: tea.KeyPressMsg,
     k: string,
   ) -> Option<tea.Cmd> {
     match k {

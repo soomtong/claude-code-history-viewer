@@ -1,6 +1,6 @@
 // 도움말 모달 (?, docs/decisions/0017). 키 묶음을 1~3열로 배치해 키와 설명을 세로로 맞추고,
 // 테두리 상자에 담아 현재 화면 위에 띄운다. 넘치면 상자 안에서 스크롤한다.
-import "go:github.com/charmbracelet/lipgloss"
+import "go:charm.land/lipgloss/v2"
 import "go:github.com/charmbracelet/x/ansi"
 
 /// 도움말 한 줄: 키와 설명

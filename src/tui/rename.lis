@@ -1,5 +1,5 @@
 // 세션 제목 변경 입력창 (R). 목록에서는 선택한 세션, 대화 화면에서는 현재 세션 (docs/decisions/0012).
-import "go:github.com/charmbracelet/bubbletea"
+import "go:charm.land/bubbletea/v2"
 
 import "model"
 import "session"
@@ -24,7 +24,7 @@ impl App {
   pub fn on_rename_key(
     self: mut Ref<Self>,
     r: RenameInput,
-    key: tea.KeyMsg,
+    key: tea.KeyPressMsg,
     k: string,
   ) -> Option<tea.Cmd> {
     match k {

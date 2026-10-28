@@ -2,6 +2,8 @@
 
 상태: 채택 (2026-10-24)
 
+> 0021 (charm v2) 에서 바뀐 점이 있다. 아래 본문은 v1 기준이다.
+
 ## 참고한 원칙
 
 - [Command Line Interface Guidelines](https://clig.dev/): `NO_COLOR` 가 비어 있지 않거나 `TERM=dumb` 이면 색을 끈다,
