@@ -26,7 +26,9 @@ pub fn clean_title(title: string) -> string {
   }
   s = strings.TrimSpace(s)
   let rs = s.runes()
-  if rs.length() > MAX_TITLE { return strings.TrimSpace(rs[..MAX_TITLE] as string) }
+  if rs.length() > MAX_TITLE {
+    return strings.TrimSpace(rs[..MAX_TITLE] as string)
+  }
   s
 }
 
@@ -50,7 +52,11 @@ pub fn rename_session(
   let sp = check_session_path(root, path)?
   let t = clean_title(title)
   if t == "" { return Err(errors.New("제목이 비어 있습니다")) }
-  let ev = TitleEvent { kind: "custom-title", custom_title: t, session_id: sp.id }
+  let ev = TitleEvent {
+    kind: "custom-title",
+    custom_title: t,
+    session_id: sp.id,
+  }
   let data = json.Marshal(ev)?
   let f = os.OpenFile(sp.clean, os.O_RDWR | os.O_APPEND, 0)?
   defer f.Close()

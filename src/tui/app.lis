@@ -1,8 +1,8 @@
 // Bubble Tea 모델. 화면: 세션 목록, 대화 뷰, 도움말, 삭제 확인 모달.
-import "go:github.com/atotto/clipboard"
 import "go:charm.land/bubbletea/v2"
 import "go:charm.land/glamour/v2"
 import "go:charm.land/lipgloss/v2"
+import "go:github.com/atotto/clipboard"
 import "go:github.com/charmbracelet/x/ansi"
 import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:path/filepath"

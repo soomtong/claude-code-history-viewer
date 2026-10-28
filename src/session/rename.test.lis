@@ -6,7 +6,8 @@ import "go:strings"
 fn cleans_title() {
   assert clean_title("  새 제목\n둘째 줄\t끝  ") == "새 제목 둘째 줄 끝"
   assert clean_title(" \n ") == ""
-  assert clean_title(strings.Repeat("가", MAX_TITLE + 10)).runes().length() == MAX_TITLE
+  assert clean_title(strings.Repeat("가", MAX_TITLE + 10)).runes().length() ==
+  MAX_TITLE
 }
 
 #[test("custom-title 줄을 덧붙이고 목록 메타 제목이 바뀐다, 기존 줄은 그대로")]
@@ -44,7 +45,11 @@ fn rejects() {
   }
   let before = os.ReadFile(t.jsonl).unwrap_or([]) as string
   assert rename_session(t.root, t.jsonl, "  ").is_err()
-  assert rename_session(t.root, filepath.Join(t.proj, "memory", "MEMORY.md"), "x").is_err()
+  assert rename_session(
+    t.root,
+    filepath.Join(t.proj, "memory", "MEMORY.md"),
+    "x",
+  ).is_err()
   let outside = filepath.Join(t.home, DEL_ID + ".jsonl")
   write(outside, "{}\n")
   assert rename_session(t.root, outside, "x").is_err()

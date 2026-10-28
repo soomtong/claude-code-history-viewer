@@ -39,7 +39,10 @@ pub struct SessionPath {
 
 /// 세션 파일 화이트리스트 검증 (삭제와 제목 변경이 함께 쓴다).
 /// 절대 경로, `..` 없음, uuid 이름, projects 바로 아래 프로젝트, 심볼릭 링크 아님, 실경로 일치.
-pub fn check_session_path(root: string, path: string) -> Result<SessionPath, error> {
+pub fn check_session_path(
+  root: string,
+  path: string,
+) -> Result<SessionPath, error> {
   if !filepath.IsAbs(path) || !filepath.IsAbs(root) {
     return Err(errors.New("절대 경로가 아닙니다"))
   }
@@ -63,7 +66,9 @@ pub fn check_session_path(root: string, path: string) -> Result<SessionPath, err
     return Err(errors.New(f"허용되지 않는 프로젝트 디렉터리: {project}"))
   }
   let info = os.Lstat(clean)?
-  if is_symlink(info) { return Err(errors.New("심볼릭 링크는 다루지 않습니다")) }
+  if is_symlink(info) {
+    return Err(errors.New("심볼릭 링크는 다루지 않습니다"))
+  }
   if !info.Mode().IsRegular() { return Err(errors.New("일반 파일이 아닙니다")) }
   // 실경로가 projects 하위의 같은 위치인지 재확인 (상위 디렉터리 심링크 차단)
   let real_root = filepath.EvalSymlinks(clean_root)?

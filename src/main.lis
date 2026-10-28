@@ -94,7 +94,9 @@ fn resolve_target(root: string, target: string) -> Result<string, string> {
   if !session.is_uuid(id) {
     return Err(f"세션 id(UUID) 또는 .jsonl 경로가 아닙니다: {target}")
   }
-  session.find_session(root, id).ok_or_else(|| f"세션을 찾지 못했습니다: {id} ({root})")
+  session
+    .find_session(root, id)
+    .ok_or_else(|| f"세션을 찾지 못했습니다: {id} ({root})")
 }
 
 fn die(msg: string) -> Never {
