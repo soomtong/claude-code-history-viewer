@@ -1,6 +1,6 @@
 [project]
 name = "claude-code-history-viewer"
-version = "0.4.2"
+version = "0.5.0"
 
 [dependencies.go]
 "github.com/bits-and-blooms/bitset" = { version = "v1.24.6", via = ["github.com/charmbracelet/x/ansi"] }
