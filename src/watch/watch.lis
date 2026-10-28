@@ -48,16 +48,15 @@ fn ms(n: int) -> time.Duration {
 /// 감시를 시작한다. fsnotify 가 실패하면 폴링으로 대신한다.
 pub fn start(dirs: Slice<string>, on_change: fn(Slice<string>)) -> Handle {
   let ch = Channel.buffered<Slice<string>>(16)
-  fsnotify.NewWatcher().map_or_else(
-    |_| start_polling(dirs, on_change),
-    |w| {
+  fsnotify
+    .NewWatcher()
+    .map_or_else(|_| start_polling(dirs, on_change), |w| {
       for d in dirs {
         let _ = w.Add(d)
       }
       task run_fsnotify(w, ch, on_change)
       Handle { mode: "fsnotify", dirs: ch }
-    },
-  )
+    })
 }
 
 fn run_fsnotify(
