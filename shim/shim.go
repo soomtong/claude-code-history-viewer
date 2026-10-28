@@ -137,6 +137,9 @@ func Key(name string) tea.KeyPressMsg {
 		c, _ := utf8.DecodeRuneInString(r)
 		return tea.KeyPressMsg{Code: c, Mod: tea.ModAlt}
 	}
+	if utf8.RuneCountInString(name) != 1 {
+		panic("shim.Key: 키 이름이나 글자 하나가 아니다 (여러 글자는 Keys): " + name)
+	}
 	c, _ := utf8.DecodeRuneInString(name)
 	k := tea.KeyPressMsg{Code: c, Text: name}
 	if unicode.IsUpper(c) {
@@ -145,6 +148,32 @@ func Key(name string) tea.KeyPressMsg {
 		k.Mod = tea.ModShift
 	}
 	return k
+}
+
+// Keys 는 키 이름이면 그 키 하나를, 아니면 글자마다 KeyPressMsg 하나씩 만든다.
+// v2 터미널은 연타해도 글자마다 이벤트를 따로 보내므로 테스트도 같은 모양으로 넣는다.
+func Keys(text string) []tea.KeyPressMsg {
+	if isKeyName(text) {
+		return []tea.KeyPressMsg{Key(text)}
+	}
+	out := make([]tea.KeyPressMsg, 0, len(text))
+	for _, r := range text {
+		out = append(out, Key(string(r)))
+	}
+	return out
+}
+
+func isKeyName(name string) bool {
+	lower := strings.ToLower(name)
+	if _, ok := specialKeys[lower]; ok || lower == "space" || utf8.RuneCountInString(name) == 1 {
+		return true
+	}
+	for _, p := range []string{"ctrl+", "alt+"} {
+		if r, ok := strings.CutPrefix(lower, p); ok && utf8.RuneCountInString(r) == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // Paste 는 터미널 붙여넣기(bracketed paste)로 들어온 PasteMsg 를 만든다.

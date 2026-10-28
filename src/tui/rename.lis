@@ -81,6 +81,7 @@ impl App {
         w,
       ),
     ]
-    st_box().Width(w + 2).Render(lines.join("\n"))
+    // lipgloss v2 의 Width 는 테두리(2)와 좌우 여백(2)을 포함한다
+    st_box().Width(w + 4).Render(lines.join("\n"))
   }
 }

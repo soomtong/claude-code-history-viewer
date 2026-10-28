@@ -154,9 +154,10 @@ impl App {
     }
     let before = self.status
     let is_key = assert_type<tea.KeyPressMsg>(msg).is_some()
+    let is_input = is_key || assert_type<tea.PasteMsg>(msg).is_some()
     let cmd = self.dispatch(msg)
-    // 키가 띄운 메시지는 같은 글이어도 타이머를 다시 건다. 그 밖의 메시지는 글이 바뀔 때만.
-    if self.status == "" || (!is_key && self.status == before) {
+    // 키나 붙여넣기가 띄운 메시지는 같은 글이어도 타이머를 다시 건다. 그 밖의 메시지는 글이 바뀔 때만.
+    if self.status == "" || (!is_input && self.status == before) {
       return (self, cmd)
     }
     self.status_gen += 1
@@ -185,6 +186,12 @@ impl App {
       self.on_files(changed.paths)
       return None
     }
+    // 붙여넣기는 키가 아니라(v2) 입력창이 열려 있고 화면이 보일 때만 넣는다 (0021)
+    if assert_type<tea.PasteMsg>(msg).is_some() {
+      self.status = ""
+      if self.too_small() || !self.editing() { return None }
+      return Some(self.feed_input(msg))
+    }
     if self.editing() { return Some(self.feed_input(msg)) }
     if self.screen == Screen.Conv {
       let cmd = self.vp.Update(msg)
@@ -205,9 +212,7 @@ impl App {
   /// 지금 화면의 문자열. 테스트는 이것을 본다.
   pub fn frame(self: mut Ref<Self>) -> string {
     if self.quitting { return "" }
-    if self.width < MIN_WIDTH || self.height < MIN_HEIGHT {
-      return self.view_too_small()
-    }
+    if self.too_small() { return self.view_too_small() }
     let modal = if self.help {
       self.view_help()
     } else if let Some(plan) = self.modal {
@@ -243,6 +248,11 @@ impl App {
     max(self.height - chrome, 1)
   }
 
+  /// 창이 최소 크기보다 작아 안내만 보이는 상태
+  fn too_small(self: Ref<Self>) -> bool {
+    self.width < MIN_WIDTH || self.height < MIN_HEIGHT
+  }
+
   fn compact(self: Ref<Self>) -> bool {
     self.opts.compact || self.width < 60
   }
@@ -258,7 +268,7 @@ impl App {
       return Some(tea.Quit)
     }
     // 화면이 안 보이는 동안 삭제 모달 같은 동작이 몰래 일어나지 않게 종료만 받는다
-    if self.width < MIN_WIDTH || self.height < MIN_HEIGHT {
+    if self.too_small() {
       if k == "q" {
         self.quitting = true
         return Some(tea.Quit)
@@ -308,7 +318,7 @@ impl App {
       "k" | "up" => self.move_cursor(-1),
       "ctrl+d" => self.move_cursor(page / 2),
       "ctrl+u" => self.move_cursor(-(page / 2)),
-      "ctrl+f" | "pgdown" | " " => self.move_cursor(page),
+      "ctrl+f" | "pgdown" | "space" => self.move_cursor(page),
       "ctrl+b" | "pgup" => self.move_cursor(-page),
       "g" | "home" => self.move_cursor(-self.rows.length()),
       "G" | "end" => self.move_cursor(self.rows.length()),
@@ -364,7 +374,7 @@ impl App {
       "u" => self.vp.LineUp(max(self.vp.Height() / 4, 1)),
       "ctrl+d" => self.vp.HalfPageDown(),
       "ctrl+u" => self.vp.HalfPageUp(),
-      "ctrl+f" | "pgdown" | " " => self.vp.PageDown(),
+      "ctrl+f" | "pgdown" | "space" => self.vp.PageDown(),
       "ctrl+b" | "pgup" => self.vp.PageUp(),
       "g" | "home" => self.vp.GotoTop(),
       "G" | "end" => self.vp.GotoBottom(),
@@ -738,11 +748,11 @@ impl App {
     }
     if self.md.is_some() && self.md_width == width { return }
     self.cache = Map.new<string, string>()
-    // glamour 는 TrueColor 로 그리고, 터미널 색 지원 수준과 NO_COLOR 에 맞춰 낮추는 일은 Bubble Tea 가 한다 (0021)
-    let theme = resolve_theme(self.opts.theme, shim.DarkBackground())
+    // 테마는 setup_colors 가 확정해 넘긴다. glamour 는 TrueColor 로 그리고,
+    // 터미널 색 지원 수준과 NO_COLOR 에 맞춰 낮추는 일은 Bubble Tea 가 한다 (0021)
     self.md = glamour
       .NewTermRenderer(
-        glamour.WithStandardStyle(theme),
+        glamour.WithStandardStyle(self.opts.theme),
         glamour.WithWordWrap(max(width - 4, 10)),
       )
       .ok()

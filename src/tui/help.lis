@@ -249,7 +249,7 @@ impl App {
     match k {
       "j" | "down" => self.help_top = min(self.help_top + 1, max_top),
       "k" | "up" => self.help_top = max(self.help_top - 1, 0),
-      "d" | "ctrl+d" | "ctrl+f" | "pgdown" | " " | "space" => self.help_top = min(
+      "d" | "ctrl+d" | "ctrl+f" | "pgdown" | "space" => self.help_top = min(
         self.help_top + h,
         max_top,
       ),

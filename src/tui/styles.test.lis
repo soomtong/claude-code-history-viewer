@@ -47,7 +47,7 @@ fn markdown_follows_color_profile() {
   assert frame.contains("[38;")
   // Bubble Tea 가 --no-color(WithColorProfile(Ascii)) 에서 쓰는 것과 같은 변환
   let mut out = strings.Builder { .. }
-  let mut w = colorprofile.Writer {
+  let w = colorprofile.Writer {
     Forward: Some(&out),
     Profile: colorprofile.Ascii,
   }
@@ -58,6 +58,7 @@ fn markdown_follows_color_profile() {
 
 #[test("배경 밝기에 따라 다른 색을 고른다")]
 fn adaptive_color() {
+  defer shim.SetDarkBackground(true)
   shim.SetDarkBackground(false)
   let light = st_title().Render("x")
   shim.SetDarkBackground(true)
