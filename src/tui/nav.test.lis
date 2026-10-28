@@ -78,6 +78,33 @@ fn paste_is_not_keys() {
   let _ = app.Update(shim.Paste("jj"))
   assert app.cursor == before
   press(&app, ["/"])
+  app.status = "old"
   let _ = app.Update(shim.Paste("gre"))
   assert app.filter == "gre"
+  // 키처럼 이전 상태 글을 지운다
+  assert app.status == ""
+  // 창이 너무 작아 안내만 보이는 동안에는 입력창에 넣지 않는다
+  let _ = app.Update(shim.WindowSize(MIN_WIDTH - 1, 10))
+  let _ = app.Update(shim.Paste("et"))
+  assert app.filter == "gre"
+  let _ = app.Update(shim.WindowSize(100, 30))
+  let _ = app.Update(shim.Paste("et"))
+  assert app.filter == "greet"
+}
+
+#[test("space 는 목록과 대화 화면에서 한 페이지 넘긴다")]
+fn space_pages() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  press(&app, ["space"])
+  assert app.cursor == 1
+  press(&app, ["k", "enter"])
+  let _ = app.Update(shim.WindowSize(100, 8))
+  assert app.vp.YOffset() == 0
+  press(&app, [" "])
+  assert app.vp.YOffset() > 0
 }
