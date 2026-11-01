@@ -34,7 +34,7 @@ fn merges_assistant_lines() {
   assert second.text() == "Done. The function now returns hello."
 }
 
-#[test("본문이 빈 thinking 블록(서명만 있음)은 블록으로 남기지 않는다")]
+#[test("본문이 빈 thinking 블록(서명만 있음)은 블록으로 남기지 않고, 본문의 끝 개행은 걷어 낸다")]
 fn drops_empty_thinking() {
   let conv = load("basic.jsonl")
   let first = conv.messages.filter(|m| m.role == model.Role.Assistant)[0]

@@ -3,6 +3,8 @@ import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:os"
 import "go:strings"
 
+import "model"
+
 fn open_basic(root: string) -> mut App {
   let mut app = new_app(opts(root))
   let _ = app.Update(shim.WindowSize(120, 200))
@@ -66,6 +68,21 @@ fn toggles() {
   assert s4.contains("<command-name>/clear</command-name>")
   assert s4.contains("[unknown block: tool_addition]")
   assert s4.contains("unknown 1, broken 1")
+}
+
+#[test("thinking 조각은 본문 끝 개행이 있어도 빈 줄을 남기지 않는다")]
+fn thinking_no_trailing_blank() {
+  let msg = model.Message {
+    id: "m",
+    role: model.Role.Assistant,
+    time: "",
+    is_prompt: false,
+    blocks: [model.Block.Thinking("Plan the greet function.\n\n")],
+  }
+  let t = Toggles { thinking: true, .. }
+  let out = render_message(msg, 60, t, true, None)
+  assert line_count(out) == 1
+  assert ansi.Strip(out) == "✻ Plan the greet function."
 }
 
 #[test("긴 블록 접기와 펼치기")]

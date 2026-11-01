@@ -274,9 +274,11 @@ fn render_block(
       }
     },
     model.Block.Thinking(text) => {
-      if !t.thinking || strings.TrimSpace(text) == "" { return None }
+      // 끝 개행을 걷어 내지 않으면 wrap 이 빈 줄로 남긴다 (메시지 사이 간격이 두 줄로 보임)
+      let body = strings.TrimSpace(text)
+      if !t.thinking || body == "" { return None }
       Some(mark(
-        st_thinking().Render(indent(wrap(text, width - 2), 2)),
+        st_thinking().Render(indent(wrap(body, width - 2), 2)),
         st_thinking().Render("✻"),
       ))
     },
