@@ -38,7 +38,7 @@ fn role_cycle() {
   assert app.spans.length() == 4
 }
 
-#[test("토글: t 도구, c 코드, T thinking, D 디버그")]
+#[test("토글: x 도구, c 코드, t thinking, P 디버그")]
 fn toggles() {
   let root = make_root()
   let mut app = open_basic(root)
@@ -46,19 +46,19 @@ fn toggles() {
     let _ = os.RemoveAll(root)
   }
   assert !screen(&app).contains("go test ./...")
-  press(&app, ["t"])
+  press(&app, ["x"])
   let s1 = screen(&app)
   assert s1.contains("● Bash go test ./...")
   assert s1.contains("⎿ ")
   assert s1.contains("File created successfully")
-  press(&app, ["t", "c"])
+  press(&app, ["x", "c"])
   let s2 = screen(&app)
   assert s2.contains("● Edit /work/demo-app/greet.go")
   assert s2.contains("+ \"hello\"")
   assert s2.contains("● Write /work/demo-app/greet.go")
   assert s2.contains("● MultiEdit")
   assert !s2.contains("Bash go test")
-  press(&app, ["T"])
+  press(&app, ["t"])
   let s3 = screen(&app)
   assert s3.contains("Plan the greet function.")
   // 본문이 빈 thinking 은 ✻ 표식만 남은 줄을 만들지 않는다
@@ -174,7 +174,7 @@ fn status_expires() {
   assert s.contains(
     "Move prompt { }  message [ ]  session H L  list h | Search /",
   )
-  assert s.contains("[T]hinking")
+  assert s.contains("[t]hinking")
   // 상태를 띄우지 않는 키는 타이머를 걸지 않는다
   let gen = app.status_gen
   let _ = app.Update(shim.Key("j"))

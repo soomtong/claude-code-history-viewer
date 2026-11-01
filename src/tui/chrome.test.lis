@@ -112,7 +112,7 @@ fn conv_timeline() {
   assert s.contains("› Add a greet function")
   assert s.contains("● I will add **greet** now.")
   assert s.contains("Messages 5 · Prompts 2")
-  press(&app, ["t"])
+  press(&app, ["x"])
   let lines = screen(&app).split("\n")
   let mut attached = false
   for (i, l) in lines.enumerate() {

@@ -421,12 +421,12 @@ impl App {
         self.status = f"Role: {self.role.label()}"
         self.relayout()
       },
-      "t" => {
+      "x" => {
         self.toggles.tools = !self.toggles.tools
         self.status = on_off("Tool calls", self.toggles.tools)
         self.relayout()
       },
-      "T" => {
+      "t" => {
         self.toggles.thinking = !self.toggles.thinking
         self.status = on_off("Thinking", self.toggles.thinking)
         self.relayout()
@@ -964,8 +964,8 @@ impl App {
         [
           hint("Search", "/"),
           label("Show"),
-          mnemonic("T", "hinking"),
-          mnemonic("t", "ool"),
+          mnemonic("t", "hinking"),
+          hint("tool", "x"),
           mnemonic("c", "ode"),
         ],
         [hint("Help", "?")],
