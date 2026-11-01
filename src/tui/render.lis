@@ -70,7 +70,7 @@ pub fn is_visible(msg: model.Message, t: Toggles, role: RoleFilter) -> bool {
   if !role.allows(msg.role) { return false }
   if msg.is_prompt || msg.has_text() { return true }
   msg.blocks.any(|b| match b {
-    model.Block.Thinking(_) => t.thinking,
+    model.Block.Thinking(text) => t.thinking && strings.TrimSpace(text) != "",
     model.Block.ToolUse { code: Some(_), .. } => t.tools || t.code,
     model.Block.ToolUse { .. } => t.tools,
     model.Block.ToolResult { .. } => t.tools,
@@ -274,7 +274,7 @@ fn render_block(
       }
     },
     model.Block.Thinking(text) => {
-      if !t.thinking { return None }
+      if !t.thinking || strings.TrimSpace(text) == "" { return None }
       Some(mark(
         st_thinking().Render(indent(wrap(text, width - 2), 2)),
         st_thinking().Render("✻"),
