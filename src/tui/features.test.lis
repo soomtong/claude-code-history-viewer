@@ -1,6 +1,7 @@
 import "go:github.com/charmbracelet/x/ansi"
 import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:os"
+import "go:strings"
 
 fn open_basic(root: string) -> mut App {
   let mut app = new_app(opts(root))
@@ -56,12 +57,15 @@ fn toggles() {
   assert s2.contains("● MultiEdit")
   assert !s2.contains("Bash go test")
   press(&app, ["T"])
-  assert screen(&app).contains("Plan the greet function.")
-  press(&app, ["P"])
   let s3 = screen(&app)
-  assert s3.contains("<command-name>/clear</command-name>")
-  assert s3.contains("[unknown block: tool_addition]")
-  assert s3.contains("unknown 1, broken 1")
+  assert s3.contains("Plan the greet function.")
+  // 본문이 빈 thinking 은 ✻ 표식만 남은 줄을 만들지 않는다
+  assert strings.Count(s3, "✻") == 1
+  press(&app, ["P"])
+  let s4 = screen(&app)
+  assert s4.contains("<command-name>/clear</command-name>")
+  assert s4.contains("[unknown block: tool_addition]")
+  assert s4.contains("unknown 1, broken 1")
 }
 
 #[test("긴 블록 접기와 펼치기")]

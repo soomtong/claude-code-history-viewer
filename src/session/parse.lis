@@ -527,9 +527,14 @@ impl Conversation {
             "text" => blocks = blocks.append(model.Block.Text(b.text.unwrap_or(
               "",
             ))),
-            "thinking" => blocks = blocks.append(model.Block.Thinking(
-              b.thinking.unwrap_or(""),
-            )),
+            // 생각 표시를 끈 모델(omitted)은 본문이 비고 서명만 있는 thinking 블록을 남긴다.
+            // 보여줄 글이 없으니 블록을 만들지 않는다 (0002).
+            "thinking" => {
+              let text = b.thinking.unwrap_or("")
+              if strings.TrimSpace(text) != "" {
+                blocks = blocks.append(model.Block.Thinking(text))
+              }
+            },
             "redacted_thinking" => blocks = blocks.append(model.Block.Thinking(
               "(redacted)",
             )),
