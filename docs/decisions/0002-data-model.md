@@ -25,7 +25,8 @@ fixture 는 그 구조를 흉내 낸 합성 데이터다: `fixtures/basic.jsonl`
 - 알 수 없는 블록(`tool_addition` 등)은 `Block.Unknown(kind)` 로 두고 `unknown_blocks` 로 집계.
 - thinking 블록은 `Block.Thinking` 으로 보존하되, 본문이 비어 있으면(생각 표시를 끈 모델이 남기는 서명만 있는 블록) 블록을 만들지 않는다.
   남겨 두면 `T` 토글에서 `✻` 표식만 있는 빈 줄이 메시지마다 그려지고 시각까지 그 줄에 붙는다 (2026-11-01).
-  `redacted_thinking` 은 `(redacted)` 본문으로 남긴다.
+  본문은 앞뒤 공백과 끝 개행을 걷어 저장한다: thinking 은 glamour 를 거치지 않아 끝 개행이 그대로 빈 줄이 되어
+  메시지 사이 간격이 두 줄로 보였다 (2026-11-01). `redacted_thinking` 은 `(redacted)` 본문으로 남긴다.
 - 코드 변경: Write(content), NotebookEdit(new_source), Edit(old/new), MultiEdit(edits[]) 를 `CodeChange` 로 추출.
 - 도구 요약: 도구별 대표 키(Bash=command, Read/Write/Edit=file_path 등), 없으면 정렬된 키 중 첫 문자열 값.
 - 깨진 JSON 줄은 `broken` 으로 세고 건너뛴다.

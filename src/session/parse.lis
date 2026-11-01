@@ -528,10 +528,11 @@ impl Conversation {
               "",
             ))),
             // 생각 표시를 끈 모델(omitted)은 본문이 비고 서명만 있는 thinking 블록을 남긴다.
-            // 보여줄 글이 없으니 블록을 만들지 않는다 (0002).
+            // 보여줄 글이 없으니 블록을 만들지 않는다. 앞뒤 공백과 끝 개행은 걷어 낸다:
+            // 본문은 glamour 를 거치지 않아 끝 개행이 그대로 빈 줄이 된다 (0002).
             "thinking" => {
-              let text = b.thinking.unwrap_or("")
-              if strings.TrimSpace(text) != "" {
+              let text = strings.TrimSpace(b.thinking.unwrap_or(""))
+              if text != "" {
                 blocks = blocks.append(model.Block.Thinking(text))
               }
             },
