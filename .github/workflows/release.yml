@@ -37,6 +37,10 @@ jobs:
 
       - run: lis --version
 
+      # 릴리스 전에 Linux 에서도 테스트가 통과하는지 확인한다 (docs/decisions/0022-linux-release.md)
+      - name: Test
+        run: lis test
+
       - name: Check tag matches VERSION
         if: github.ref_type == 'tag'
         run: |

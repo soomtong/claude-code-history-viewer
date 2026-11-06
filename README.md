@@ -7,6 +7,25 @@ lis run          # 개발 실행
 lis build        # target/.lisette/bin/claude-code-history-viewer
 ```
 
+## 설치
+
+macOS 는 Homebrew:
+
+```bash
+brew install soomtong/tap/cci
+```
+
+Linux (amd64, arm64) 는 [Releases](https://github.com/soomtong/claude-code-history-viewer/releases) 의
+`cci_<버전>_linux_<arch>.tar.gz` 를 받아 `cci` 를 PATH 에 둔다. 정적 바이너리라 별도 의존성은 없다.
+
+```bash
+tar -xzf cci_<버전>_linux_amd64.tar.gz
+install -m 0755 cci_<버전>_linux_amd64/cci ~/.local/bin/cci
+```
+
+`checksums.txt` 로 sha256 을 확인할 수 있다. `y`(복사), `ctrl+v`(붙여넣기)는 Linux 에서 `xclip`, `xsel`,
+`wl-clipboard` 중 하나가 있어야 동작하고, 없으면 명령만 상태줄에 보여 준다.
+
 ## 실행
 
 ```bash
@@ -105,6 +124,8 @@ Claude Code 의 `/rename` 과 같은 방식으로 세션 jsonl 끝에 `custom-ti
 
 `D`(shift+d) 로 삭제 대상을 보여주는 모달이 열린다. `y` 를 눌렀을 때만 삭제하고, 그 외 모든 키는 취소다.
 기본은 휴지통(`~/.Trash/cci/`)으로 이동하며, `--purge` 를 주면 영구 삭제한다.
+Linux 에서도 같은 경로를 쓰며 파일 관리자의 휴지통과는 별개다. `~/.claude` 가 홈과 다른 파일시스템이면
+이동이 실패하므로 `--purge` 를 쓴다.
 삭제 차단 사유가 있는 세션(최근에 갱신 중이거나 열람 중)은 `y` 를 눌러도 실행되지 않는다.
 
 ## 문서
