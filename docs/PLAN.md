@@ -84,7 +84,7 @@ Claude Code 대화 내용을 터미널에서 복기하기 위한 TUI 뷰어.
 - 언어: Lisette (Go 로 transpile, `lis build` -> `target/` 의 Go 코드를 Go toolchain 으로 빌드).
 - TUI: Bubble Tea + Lip Gloss + Bubbles (list, textinput, viewport). 마크다운 렌더링은 Glamour.
 - 파일 감시: fsnotify (또는 폴링 fallback).
-- 배포: 릴리스 스크립트로 darwin arm64/amd64 (필요 시 linux) prebuilt binary, Homebrew tap.
+- 배포: 릴리스 스크립트로 darwin/linux 의 arm64/amd64 prebuilt binary (decisions/0022), Homebrew tap.
 
 핵심 위험: Lisette 에서 서드파티 Go 패키지(bubbletea 등) 바인딩이 어디까지 되는지 미검증.
 Bubble Tea 의 `Model` 인터페이스(Init/Update/View)와 제네릭/`tea.Msg` (any) 처리가 관건.

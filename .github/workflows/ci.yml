@@ -1,0 +1,48 @@
+# main push / PR 에서 Linux 테스트와 릴리스 dry-run(전 타깃 교차 빌드 + linux/amd64 스모크 테스트)을 돌린다.
+# 외부 공개 작업은 하지 않는다 (scripts/release.sh 는 --publish 없이 실행). docs/decisions/0022-linux-release.md
+# LISETTE_VERSION, LISETTE_SHA256 은 release.yml 과 같은 값으로 함께 갱신한다.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  LISETTE_VERSION: 0.12.5
+  LISETTE_SHA256: 3926cbf7825b3f9ef8e7c6c4b1d06082ccba4adf86e44e9bd68242722254e2de
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install lis (prebuilt)
+        run: |
+          name=lisette-x86_64-unknown-linux-musl
+          curl -fsSL -o "$RUNNER_TEMP/$name.tar.xz" \
+            "https://github.com/ivov/lisette/releases/download/lisette-v$LISETTE_VERSION/$name.tar.xz"
+          echo "$LISETTE_SHA256  $RUNNER_TEMP/$name.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$name.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+
+      - run: lis --version
+
+      - run: lis test
+
+      - name: Release dry-run
+        run: scripts/release.sh
+
+      - name: Show artifacts
+        run: |
+          ls -l dist
+          cat dist/checksums.txt
