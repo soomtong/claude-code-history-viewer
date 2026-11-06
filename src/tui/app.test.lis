@@ -155,7 +155,14 @@ fn headless_program() -> Result<(), error> {
     let _ = os.RemoveAll(root)
   }
   let mut app = new_app(opts(root))
-  let r = os.Open(os.DevNull)?
+  // 입력은 /dev/null 이 아니라 파이프다. Bubble Tea 의 cancelreader 는 Linux 에서 epoll 로 입력을 감시하는데
+  // /dev/null 은 epoll 에 등록할 수 없다(EPERM). macOS 의 kqueue 는 허용해서 지금까지 드러나지 않았다.
+  // 쓰는 쪽은 테스트가 끝날 때까지 열어 둔다(닫으면 EOF).
+  let (r, w) = os.Pipe()?
+  defer {
+    let _ = w.Close()
+    let _ = r.Close()
+  }
   let mut program = tea.NewProgram(
     &app,
     tea.WithInput(r),

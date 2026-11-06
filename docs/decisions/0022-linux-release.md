@@ -36,9 +36,16 @@
 - 대소문자: macOS(APFS)는 대소문자 비구분, Linux 는 구분이다. 대소문자 UUID 테스트와 삭제 로직의 `strings.EqualFold`
   가 Linux 에서 같은 결과인지는 `lis test` 로 확인해야 한다 (아래 확인 필요).
 
+## 첫 CI 실행에서 발견한 것
+
+- `lis test` 87개 중 `헤드리스 program: Send 로 키 주입` 하나만 Linux 에서 실패했다
+  (`bubbletea: could not create cancelable reader: add reader to epoll`). 대소문자, `/tmp` 심링크 관련 테스트는 통과했다.
+- 원인은 테스트 입력으로 쓴 `/dev/null`: Linux 의 epoll 은 `/dev/null` 을 등록하지 못한다(EPERM). macOS 의 kqueue 는 허용한다.
+  제품 코드는 실제 TTY 를 쓰므로 영향이 없고 테스트의 macOS 가정이었다. 입력을 `os.Pipe()` 읽기 끝으로 바꿨다.
+
 ## 확인 필요
 
 1. 이 변경은 `lis` 를 설치하지 못한 환경에서 작성했다. `bash -n`, 체크섬/formula 생성부 단독 실행만 검증했고
    `lis emit` → 4개 타깃 `go build` → 스모크 테스트는 `ci.yml` 의 첫 실행으로 확인한다.
-2. `lis test` 의 Linux 통과 여부(특히 대소문자, `/tmp` 심볼릭 링크 관련 테스트).
+2. `lis test` 전체의 Linux 통과 (위 수정 후 재실행).
 3. 실제 Linux 에서 tar.gz 를 받아 `cci --version`, `cci --list` 실행.
