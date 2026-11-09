@@ -1,0 +1,50 @@
+import "go:github.com/charmbracelet/x/ansi"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
+import "go:os"
+import "go:path/filepath"
+import "go:time"
+
+import "session"
+
+fn open_compact(root: string) -> mut App {
+  put(
+    "compact.jsonl",
+    filepath.Join(
+      root,
+      session.encode_path("/work/compact"),
+      "44444444-5555-4666-8777-888888888888.jsonl",
+    ),
+    time.Hour,
+  )
+  let mut o = opts(root)
+  o.cwd = "/work/compact"
+  let mut app = new_app(o)
+  let _ = app.Update(shim.WindowSize(120, 200))
+  press(&app, ["enter"])
+  app
+}
+
+#[test("압축 요약: 프롬프트가 아니라 한 줄 ↻ Context compacted · 첫 줄 (+N lines, e), e 로 펼친다")]
+fn compact_collapsed() {
+  let root = os.MkdirTemp("", "cci-compact-").unwrap_or("/nonexistent")
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = open_compact(root)
+  let s = ansi.Strip(app.frame())
+  assert s.contains(
+    "↻ Context compacted · 1. 요청: 가시성 규칙을 고친다.  (+3 lines, e)",
+  )
+  assert !s.contains("This session is being continued")
+  assert !s.contains("system-reminder")
+  assert !s.contains("2. 진행: 테스트를 추가했다.")
+  assert s.contains("Prompts 2")
+  assert app.spans.filter(|sp| sp.prompt).length() == 2
+  press(&app, ["e"])
+  let open = ansi.Strip(app.frame())
+  assert open.contains("  2. 진행: 테스트를 추가했다.")
+  assert !open.contains("lines, e)")
+  // 사람 글이 아니라 User 필터에서는 빠진다
+  press(&app, ["r"])
+  assert !ansi.Strip(app.frame()).contains("Context compacted")
+}

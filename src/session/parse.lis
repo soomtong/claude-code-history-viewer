@@ -27,6 +27,8 @@ struct RawEvent {
   is_sidechain: Option<bool>,
   #[json("isMeta")]
   is_meta: Option<bool>,
+  #[json("isCompactSummary")]
+  is_compact_summary: Option<bool>,
   #[json("aiTitle")]
   ai_title: Option<string>,
   #[json("customTitle")]
@@ -199,6 +201,25 @@ fn user_text_blocks(t: string, is_meta: bool) -> (Slice<model.Block>, string) {
   if rest == "" { return (tm, "") }
   let out = [model.Block.Text(rest)].append(tm...)
   (out, rest)
+}
+
+/// 압축 요약 앞에 붙는 안내 문장. 본문이 아니라서 지운다.
+const COMPACT_PREAMBLE = "This session is being continued from a previous conversation"
+
+fn reminder_re() -> Ref<regexp.Regexp> {
+  regexp.MustCompile(r"(?s)<system-reminder>.*?</system-reminder>\s*")
+}
+
+/// 압축 요약에서 안내 단락, `<system-reminder>`, 머리 `Summary:` 줄을 걷어 낸 본문.
+pub fn compact_body(text: string) -> string {
+  let mut t = reminder_re().ReplaceAllString(text, "")
+  t = strings.TrimSpace(t)
+  if t.starts_with(COMPACT_PREAMBLE) {
+    let (_, rest, _) = strings.Cut(t, "\n")
+    t = strings.TrimSpace(rest)
+  }
+  t = strings.TrimSpace(strings.TrimPrefix(t, "Summary:"))
+  t
 }
 
 /// 문자열을 한 줄로 접고 최대 n 룬으로 자른다.
@@ -433,11 +454,42 @@ impl Conversation {
     if let Some(b) = ev.git_branch { if b != "" { self.git_branch = b } }
     let uuid = ev.uuid.unwrap_or("")
     if ev.kind == "user" {
+      if ev.is_compact_summary.unwrap_or(false) {
+        self.add_compact(uuid, ts, msg.content)
+        return
+      }
       self.add_user(uuid, ts, ev.is_meta.unwrap_or(false), msg.content)
     } else {
       let id = msg.id.unwrap_or(uuid)
       self.add_assistant(id, ts, msg.content)
     }
+  }
+
+  /// 압축 요약 줄은 프롬프트가 아니다: 수, 첫 프롬프트에서 빠지고 `Block.Compact` 하나로 남는다 (0023).
+  fn add_compact(
+    self: mut Ref<Self>,
+    uuid: string,
+    ts: string,
+    raw: json.RawMessage,
+  ) {
+    let text = match parse_content(raw) {
+      Content.Plain(s) => s,
+      Content.Blocks(bs) => bs
+        .filter(|b| b.kind == "text")
+        .map(|b| b.text.unwrap_or(""))
+        .join("\n\n"),
+      Content.Empty => "",
+    }
+    if self.meta_only { return }
+    self.messages = self.messages.append(
+      model.Message {
+        id: uuid,
+        role: model.Role.User,
+        time: ts,
+        is_prompt: false,
+        blocks: [model.Block.Compact(compact_body(text))],
+      },
+    )
   }
 
   fn add_user(

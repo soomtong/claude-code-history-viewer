@@ -129,3 +129,23 @@ fn meta_only_matches() -> Result<(), error> {
   assert s.first_prompt == "Add a greet function to the demo app"
   Ok(())
 }
+
+#[test("압축 요약(isCompactSummary)은 프롬프트가 아니고 Block.Compact 하나로 남는다")]
+fn compact_summary() {
+  let conv = load("compact.jsonl")
+  assert conv.prompt_count == 2
+  assert conv.first_prompt == "가시성 규칙을 고쳐 줘"
+  let m = conv.messages[2]
+  assert !m.is_prompt
+  assert m.text() == ""
+  assert m.blocks.length() == 1
+  let model.Block.Compact(body) = m.blocks[0] else {
+    assert false
+    return
+  }
+  // 안내 문장, system-reminder, Summary: 머리는 걷어 낸다
+  assert body.starts_with("1. 요청: 가시성 규칙을 고친다.")
+  assert body.ends_with("3. 남은 일: 문서를 갱신한다.")
+  assert !body.contains("system-reminder")
+  assert !body.contains("This session is being continued")
+}

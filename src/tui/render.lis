@@ -77,6 +77,8 @@ pub fn is_visible(msg: model.Message, t: Toggles, role: RoleFilter) -> bool {
     model.Block.Meta(_) | model.Block.Unknown(_) => t.debug,
     // 팀원 메시지는 사람도 이 세션의 Claude 도 아니라 전체(All)에서만 보인다 (0020)
     model.Block.Teammate { .. } => role == RoleFilter.All,
+    // 압축 요약도 사람 글이 아니라 전체(All)에서만 보인다 (0023)
+    model.Block.Compact(_) => role == RoleFilter.All,
     _ => false,
   })
 }
@@ -310,7 +312,31 @@ fn render_block(
       width,
       t.expand,
     )),
+    model.Block.Compact(body) => Some(render_compact(body, width, t.expand)),
   }
+}
+
+/// 압축 요약 (0023): 기본은 한 줄 `↻ Context compacted · 첫 줄  (+N lines, e)`, 펼치면(e) 아래에 본문.
+fn render_compact(body: string, width: int, expand: bool) -> string {
+  let lines = if body == "" {
+    Slice.new<string>()
+  } else {
+    wrap(body, width - 2).split("\n")
+  }
+  let n = lines.length()
+  let unit = if n == 1 { "line" } else { "lines" }
+  let more = if expand || lines.is_empty() {
+    ""
+  } else {
+    st_faint().Render(f"  (+{n} {unit}, e)")
+  }
+  let first = strings.TrimSpace(body.split("\n")[0])
+  let mut head = st_faint().Render("↻ Context compacted")
+  if first != "" { head = head + st_faint().Render(" · ") + first }
+  let room = max(width - ansi.StringWidth(more) - TIME_ROOM, 10)
+  let line = ansi.Truncate(head, room, "…") + more
+  if !expand || lines.is_empty() { return line }
+  line + "\n" + st_faint().Render(indent(lines.join("\n"), 2))
 }
 
 /// 시각 자리(` 15:04`)를 남기려고 머리 줄에서 비워 두는 폭
@@ -385,7 +411,7 @@ pub fn render_message(
   }
   if parts.is_empty() { return st_faint().Render("  (빈 메시지)") }
   let body = parts.join("\n")
-  if msg.role == model.Role.Assistant || msg.has_teammate() {
+  if msg.role == model.Role.Assistant || msg.has_teammate() || msg.has_compact() {
     return with_time(body, at, width)
   }
   body
@@ -394,7 +420,8 @@ pub fn render_message(
 /// 도구 결과만 담은 user 메시지는 앞 도구 호출에 빈 줄 없이 붙인다.
 pub fn attaches_to_previous(msg: model.Message) -> bool {
   msg.role == model.Role.User && !msg.is_prompt && !msg.has_text() &&
-  !msg.has_teammate()
+  !msg.has_teammate() &&
+  !msg.has_compact()
 }
 
 /// 문자열의 줄 수

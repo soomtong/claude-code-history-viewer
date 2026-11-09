@@ -39,6 +39,8 @@ pub enum Block {
   Meta(string),
   /// 다른 에이전트(팀원)가 보낸 `<teammate-message>` (docs/decisions/0020)
   Teammate { id: string, color: string, summary: string, body: string },
+  /// 컨텍스트 압축 뒤 Claude Code 가 넣는 요약(`isCompactSummary`) 본문 (docs/decisions/0023)
+  Compact(string),
   /// 알 수 없는 블록 type
   Unknown(string),
 }
@@ -72,6 +74,14 @@ impl Message {
   pub fn has_teammate(self) -> bool {
     self.blocks.any(|b| match b {
       Block.Teammate { .. } => true,
+      _ => false,
+    })
+  }
+
+  /// 압축 요약 블록이 있는지
+  pub fn has_compact(self) -> bool {
+    self.blocks.any(|b| match b {
+      Block.Compact(_) => true,
       _ => false,
     })
   }

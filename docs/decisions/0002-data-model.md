@@ -18,6 +18,7 @@ fixture 는 그 구조를 흉내 낸 합성 데이터다: `fixtures/basic.jsonl`
   메타 태그: command-name/message/args/contents, local-command-stdout/stderr/caveat, system-reminder,
   task-notification, user-prompt-submit-hook, bash-input/stdout/stderr, 그리고 `[Request interrupted` 접두.
   메타 텍스트는 `Block.Meta` 로 보존해 디버그 토글에서만 보인다.
+  `isCompactSummary` 줄(압축 요약)도 프롬프트가 아니며 `Block.Compact` 로 접어 보인다 (0023).
 - tool_result 만 있는 user 줄은 프롬프트가 아니며 `Block.ToolResult` 로 보존(content 가 string 또는 text 블록 배열).
 - 메시지 수(msg_count) = 프롬프트 수 + 고유 assistant message.id 수. 프롬프트 수(prompt_count)는 별도.
 - cwd 는 첫 user 줄에서, gitBranch 는 마지막 값, started/updated 는 대화 줄의 첫/마지막 timestamp.
