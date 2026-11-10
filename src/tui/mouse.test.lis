@@ -1,4 +1,5 @@
 import "go:charm.land/bubbletea/v2"
+import "go:github.com/charmbracelet/x/ansi"
 import "go:github.com/soomtong/claude-code-history-viewer/shim"
 import "go:os"
 
@@ -64,6 +65,13 @@ fn list_click() {
   assert app.list_row_at(2).is_none()
   let y1 = row_y(&app, 1)
   assert y1 > 2
+  // list_row_at 의 줄 계산이 실제 화면(view_list)과 맞는지: 그 줄에 두 번째 세션 제목이 있다
+  let Some(second) = app.sessions.get(app.rows[1]) else {
+    assert false
+    return
+  }
+  let screen = ansi.Strip(app.frame()).split("\n")
+  assert screen[y1].contains(second.title)
   // 항목의 두 번째 줄(메타)도 같은 항목
   assert app.list_row_at(y1 + 1) == Some(1)
   let _ = app.Update(shim.Click(5, 0))
