@@ -1,0 +1,78 @@
+// 마우스: 휠 스크롤과 목록 클릭 (docs/decisions/0024).
+// 화면이 마우스를 잡는 동안 터미널의 드래그 선택은 shift(iTerm2 는 option)를 눌러야 한다.
+// 그래서 --no-mouse, 설정 mouse = false 로 끌 수 있게 했다.
+import "go:charm.land/bubbletea/v2"
+
+/// 대화 본문에서 휠 한 칸에 움직이는 줄 수 (bubbles viewport 기본값과 같다)
+pub const WHEEL_LINES = 3
+
+/// 휠 방향: 아래로 +1, 위로 -1, 가로 휠은 0
+pub fn wheel_dir(m: tea.MouseWheelMsg) -> int {
+  if m.Button == tea.MouseWheelDown { return 1 }
+  if m.Button == tea.MouseWheelUp { return -1 }
+  0
+}
+
+impl App {
+  /// 휠: 도움말이 떠 있으면 상자 안, 목록은 선택 항목, 대화는 본문을 움직인다.
+  /// 삭제 확인, 제목 변경 모달이 떠 있거나 창이 너무 작으면 무시한다.
+  pub fn on_wheel(self: mut Ref<Self>, m: tea.MouseWheelMsg) {
+    let dir = wheel_dir(m)
+    if dir == 0 || self.too_small() { return }
+    if self.help {
+      let (body, h) = self.help_rows()
+      let max_top = max(body.length() - h, 0)
+      self.help_top = min(max(self.help_top + dir * WHEEL_LINES, 0), max_top)
+      return
+    }
+    if self.modal.is_some() || self.renaming.is_some() { return }
+    match self.screen {
+      Screen.List => self.move_cursor(dir),
+      Screen.Conv => {
+        if dir > 0 {
+          self.vp.LineDown(WHEEL_LINES)
+        } else {
+          self.vp.LineUp(WHEEL_LINES)
+        }
+        self.after_scroll()
+      },
+    }
+  }
+
+  /// 왼쪽 클릭: 목록에서 항목을 고르고, 이미 고른 항목을 다시 누르면 연다.
+  /// 필터 입력 중에는 고르기만 한다. 그 밖의 화면과 모달에서는 무시한다.
+  pub fn on_click(self: mut Ref<Self>, m: tea.MouseClickMsg) {
+    if m.Button != tea.MouseLeft || self.too_small() { return }
+    if self.help || self.modal.is_some() || self.renaming.is_some() { return }
+    if self.screen != Screen.List { return }
+    let Some(row) = self.list_row_at(m.Y) else {
+      return
+    }
+    if row == self.cursor && !self.filter_editing {
+      if let Some(s) = self.selected() { self.open_session(s) }
+      return
+    }
+    self.cursor = row
+    self.clamp_list()
+  }
+
+  /// 목록 화면 y 줄에 놓인 세션 항목(rows 인덱스). 헤더, 필터 줄, 묶음 제목, 빈 줄, 하단 줄이면 None.
+  /// 목록은 헤더 1줄과 필터 1줄 다음, y = 2 부터 시작한다 (view_list).
+  pub fn list_row_at(self: Ref<Self>, y: int) -> Option<int> {
+    let i = y - 2
+    if i < 0 || i >= self.list_height() { return None }
+    let layout = self.list_layout()
+    let k = self.top + i
+    if k >= layout.length() { return None }
+    match layout[k] {
+      ListLine.Item { row, .. } => Some(row),
+      _ => None,
+    }
+  }
+
+  /// 대화 본문을 움직인 뒤: 보이는 범위를 렌더하고, 끝에 닿았으면 새 메시지 표시를 지운다.
+  pub fn after_scroll(self: mut Ref<Self>) {
+    self.ensure_rendered()
+    if self.vp.AtBottom() { self.new_count = 0 }
+  }
+}

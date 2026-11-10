@@ -26,7 +26,7 @@
 
 ## 설정과 CLI
 
-- `~/.config/cci/config.toml`: `watch`, `theme`, `purge`, `compact`. 기본값을 채운 구조체에 디코드해서
+- `~/.config/cci/config.toml`: `watch`, `theme`, `purge`, `compact`, `mouse`(0024). 기본값을 채운 구조체에 디코드해서
   있는 키만 덮어쓴다(`#[toml]` + BurntSushi/toml). 타입이 틀리면 오류로 종료.
 - 우선순위: CLI(`--watch`/`--no-watch`) > 환경변수 `CCI_NO_WATCH`(비어 있지 않고 0/false 가 아니면 끔) > 설정 > 기본(on).
 - 인자: `--all`, `--parent`, `--no-watch`, `--watch`, `--purge`, `--theme <이름>`/`--theme=`, `--compact`,

@@ -28,6 +28,8 @@ fn help_sections() -> Slice<HelpSection> {
         hk("?", "도움말 열기 / 닫기"),
         hk("q", "종료"),
         hk("ctrl+c", "강제 종료"),
+        hk("휠", "스크롤 (목록은 선택 이동)"),
+        hk("클릭", "목록 선택, 다시 누르면 열기"),
       ],
     },
     HelpSection {

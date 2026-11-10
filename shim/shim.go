@@ -185,3 +185,17 @@ func Paste(text string) tea.PasteMsg {
 func WindowSize(width, height int) tea.WindowSizeMsg {
 	return tea.WindowSizeMsg{Width: width, Height: height}
 }
+
+// Wheel 은 테스트용 마우스 휠 메시지를 만든다. down 이 true 면 아래로, 아니면 위로 굴린다.
+func Wheel(x, y int, down bool) tea.MouseWheelMsg {
+	b := tea.MouseWheelUp
+	if down {
+		b = tea.MouseWheelDown
+	}
+	return tea.MouseWheelMsg{X: x, Y: y, Button: b}
+}
+
+// Click 은 테스트용 왼쪽 버튼 클릭 메시지를 만든다.
+func Click(x, y int) tea.MouseClickMsg {
+	return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}
+}

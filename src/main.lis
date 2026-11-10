@@ -25,12 +25,13 @@ const USAGE = "사용법: cci [옵션] [세션 id | 경로.jsonl]
   --purge          삭제 시 휴지통 대신 영구 삭제
   --theme <이름>   마크다운 테마: dark(기본), light, notty, auto ...
   --compact        좁은 창용 간결한 화면
+  --no-mouse       마우스 끄기 (터미널 드래그 선택을 그대로 쓰기, 설정 mouse = false 와 같음)
   --no-color       색 끄기 (환경변수 NO_COLOR 나 TERM=dumb 이면 자동으로 끔)
   --list           TUI 없이 세션 목록을 출력
   --version        버전
   -h, --help       도움말
 
-설정: ~/.config/cci/config.toml (watch, theme, purge, compact)"
+설정: ~/.config/cci/config.toml (watch, theme, purge, compact, mouse)"
 
 struct Cli {
   scope: session.Scope,
@@ -38,6 +39,7 @@ struct Cli {
   purge: bool,
   theme: string,
   compact: bool,
+  no_mouse: bool,
   no_color: bool,
   list: bool,
   target: string,
@@ -55,6 +57,7 @@ fn parse_args(args: Slice<string>) -> Result<Cli, string> {
       "--watch" => cli.watch = Some(true),
       "--purge" => cli.purge = true,
       "--compact" => cli.compact = true,
+      "--no-mouse" => cli.no_mouse = true,
       "--no-color" => cli.no_color = true,
       "--list" => cli.list = true,
       "--theme" => {
@@ -157,6 +160,7 @@ fn main() {
     open_path,
     plain: false,
     version: VERSION,
+    mouse: cfg.mouse && !cli.no_mouse,
   }
   if cli.list {
     print_list(opts)

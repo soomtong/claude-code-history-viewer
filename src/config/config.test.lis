@@ -11,12 +11,18 @@ fn loads() -> Result<(), error> {
   let missing = load_from(filepath.Join(dir, "none.toml"))?
   assert missing.watch
   assert missing.theme == "dark"
+  assert missing.mouse
   let path = filepath.Join(dir, "config.toml")
   os.WriteFile(path, "theme = \"light\"\npurge = true\n".bytes(), 0o644)?
   let cfg = load_from(path)?
   assert cfg.theme == "light"
   assert cfg.purge
   assert cfg.watch
+  assert cfg.mouse
+  os.WriteFile(path, "mouse = false\n".bytes(), 0o644)?
+  let no_mouse = load_from(path)?
+  assert !no_mouse.mouse
+  os.WriteFile(path, "theme = \"light\"\npurge = true\n".bytes(), 0o644)?
   let _ = os.Setenv("CCI_NO_WATCH", "1")
   let off = load_from(path)?
   let _ = os.Unsetenv("CCI_NO_WATCH")

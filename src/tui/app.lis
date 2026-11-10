@@ -23,6 +23,7 @@ pub struct Options {
   pub open_path: string, // 바로 열 세션 경로 ("" 이면 목록부터)
   pub plain: bool, // 테스트에서 glamour 를 끄고 평문 렌더만 쓰기
   pub version: string, // 헤더에 보일 앱 버전 ("" 이면 생략)
+  pub mouse: bool, // 마우스 휠, 클릭을 받는다 (0024)
 }
 
 pub enum Screen {
@@ -186,6 +187,14 @@ impl App {
       self.on_files(changed.paths)
       return None
     }
+    // 마우스는 입력창이 열려 있어도 입력으로 넘기지 않는다. 휠과 클릭만 쓰고 나머지는 버린다.
+    // 마우스를 껐으면(--no-mouse) 혹시 들어온 이벤트도 버린다 (0024).
+    if assert_type<tea.MouseMsg>(msg).is_some() {
+      if !self.opts.mouse { return None }
+      if let Some(m) = assert_type<tea.MouseWheelMsg>(msg) { self.on_wheel(m) }
+      if let Some(m) = assert_type<tea.MouseClickMsg>(msg) { self.on_click(m) }
+      return None
+    }
     // 붙여넣기는 키가 아니라(v2) 입력창이 열려 있고 화면이 보일 때만 넣는다 (0021)
     if assert_type<tea.PasteMsg>(msg).is_some() {
       self.status = ""
@@ -206,6 +215,8 @@ impl App {
   pub fn View(self: mut Ref<Self>) -> tea.View {
     let mut v = tea.NewView(self.frame())
     v.AltScreen = true
+    // 셀 단위 모드: 클릭, 놓기, 휠, 누른 채 끌기만 받는다 (움직임만으로는 이벤트가 오지 않는다)
+    if self.opts.mouse { v.MouseMode = tea.MouseModeCellMotion }
     v
   }
 
@@ -450,10 +461,7 @@ impl App {
       },
       _ => (),
     }
-    if self.screen == Screen.Conv {
-      self.ensure_rendered()
-      if self.vp.AtBottom() { self.new_count = 0 }
-    }
+    if self.screen == Screen.Conv { self.after_scroll() }
     None
   }
 
