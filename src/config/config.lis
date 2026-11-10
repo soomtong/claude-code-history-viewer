@@ -9,10 +9,17 @@ pub struct Config {
   pub theme: string, // glamour 테마: dark, light, notty, auto 등
   pub purge: bool, // true 면 삭제가 휴지통 대신 영구 삭제
   pub compact: bool,
+  pub mouse: bool, // 마우스 휠, 클릭 (기본 true, 0024)
 }
 
 pub fn defaults() -> Config {
-  Config { watch: true, theme: "dark", purge: false, compact: false }
+  Config {
+    watch: true,
+    theme: "dark",
+    purge: false,
+    compact: false,
+    mouse: true,
+  }
 }
 
 pub fn config_path() -> string {

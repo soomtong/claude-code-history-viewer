@@ -1,0 +1,205 @@
+import "go:charm.land/bubbletea/v2"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
+import "go:os"
+
+fn wheel(app: mut Ref<App>, down: bool, times: int) {
+  for _ in 0..times {
+    let _ = app.Update(shim.Wheel(10, 10, down))
+  }
+}
+
+/// 목록에서 rows 인덱스 row 의 첫 줄이 놓인 화면 y. 없으면 -1.
+fn row_y(app: Ref<App>, row: int) -> int {
+  for y in 0..app.height {
+    if app.list_row_at(y) == Some(row) { return y }
+  }
+  -1
+}
+
+fn mouse_opts(root: string) -> Options {
+  Options { mouse: true, ..opts(root) }
+}
+
+#[test("마우스 모드: 기본은 셀 단위로 켜고, mouse = false 면 끈다")]
+fn mouse_mode() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut on = new_app(Options { mouse: true, ..opts(root) })
+  assert on.View().MouseMode == tea.MouseModeCellMotion
+  let mut off = new_app(Options { mouse: false, ..opts(root) })
+  assert off.View().MouseMode == tea.MouseModeNone
+}
+
+#[test("목록: 휠로 선택 이동, 끝에서 멈춘다")]
+fn list_wheel() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(mouse_opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  assert app.cursor == 0
+  wheel(&app, true, 1)
+  assert app.cursor == 1
+  wheel(&app, true, 5)
+  assert app.cursor == 1
+  wheel(&app, false, 5)
+  assert app.cursor == 0
+  assert app.screen == Screen.List
+}
+
+#[test("목록: 클릭으로 고르고, 고른 항목을 다시 누르면 연다. 헤더와 묶음 제목은 무시")]
+fn list_click() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(mouse_opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  // 헤더, 필터 줄, 묶음 제목은 항목이 아니다
+  assert app.list_row_at(0).is_none()
+  assert app.list_row_at(1).is_none()
+  assert app.list_row_at(2).is_none()
+  let y1 = row_y(&app, 1)
+  assert y1 > 2
+  // 항목의 두 번째 줄(메타)도 같은 항목
+  assert app.list_row_at(y1 + 1) == Some(1)
+  let _ = app.Update(shim.Click(5, 0))
+  assert app.cursor == 0
+  let _ = app.Update(shim.Click(5, y1 + 1))
+  assert app.cursor == 1
+  assert app.screen == Screen.List
+  let _ = app.Update(shim.Click(5, y1))
+  assert app.screen == Screen.Conv
+  assert app.current.id == SID_B
+}
+
+#[test("목록: 필터 입력 중 클릭은 고르기만 하고, 마우스는 입력값을 바꾸지 않는다")]
+fn click_while_filtering() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(mouse_opts(root))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  press(&app, ["/"])
+  assert app.filter_editing
+  let y0 = row_y(&app, 0)
+  let _ = app.Update(shim.Click(5, y0))
+  assert app.screen == Screen.List
+  assert app.filter_editing
+  assert app.filter == ""
+  wheel(&app, true, 1)
+  assert app.cursor == 1
+  assert app.filter == ""
+}
+
+#[test("대화: 휠로 본문이 WHEEL_LINES 줄씩, 가로 휠과 모달 중에는 그대로")]
+fn conv_wheel() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(mouse_opts(root))
+  let _ = app.Update(shim.WindowSize(80, 5))
+  press(&app, ["enter"])
+  assert app.screen == Screen.Conv
+  assert app.vp.YOffset() == 0
+  wheel(&app, true, 1)
+  assert app.vp.YOffset() == WHEEL_LINES
+  wheel(&app, false, 1)
+  assert app.vp.YOffset() == 0
+  wheel(&app, true, 1)
+  assert app.vp.YOffset() == WHEEL_LINES
+  // 가로 휠은 무시
+  let _ = app.Update(
+    tea.MouseWheelMsg { X: 0, Y: 0, Button: tea.MouseWheelRight, .. },
+  )
+  assert app.vp.YOffset() == WHEEL_LINES
+  // 끝까지 굴리면 바닥에서 멈춘다
+  wheel(&app, true, 1000)
+  assert app.vp.AtBottom()
+  // 대화 화면 클릭은 아무 일도 하지 않는다
+  let _ = app.Update(shim.Click(5, 5))
+  assert app.screen == Screen.Conv
+  // 삭제 확인 모달 중에는 본문이 움직이지 않는다
+  wheel(&app, false, 1000)
+  press(&app, ["D"])
+  assert app.modal.is_some()
+  wheel(&app, true, 1)
+  assert app.vp.YOffset() == 0
+  press(&app, ["n"])
+  assert app.modal.is_none()
+  assert app.screen == Screen.Conv
+}
+
+#[test("대화: 검색 입력 중에도 휠로 본문을 움직이고 입력값은 그대로")]
+fn wheel_while_searching() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(mouse_opts(root))
+  let _ = app.Update(shim.WindowSize(80, 8))
+  press(&app, ["enter", "/", "greet"])
+  assert app.search_editing
+  wheel(&app, true, 1)
+  assert app.vp.YOffset() == WHEEL_LINES
+  assert app.search_editing
+  assert app.input.Value() == "greet"
+}
+
+#[test("도움말: 휠로 상자 안 스크롤, 범위를 넘지 않는다")]
+fn help_wheel() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(mouse_opts(root))
+  let _ = app.Update(shim.WindowSize(80, 24))
+  press(&app, ["?"])
+  wheel(&app, true, 1)
+  assert app.help_top == WHEEL_LINES
+  assert app.cursor == 0
+  wheel(&app, true, 1000)
+  let (body, h) = app.help_rows()
+  assert app.help_top == body.length() - h
+  wheel(&app, false, 1000)
+  assert app.help_top == 0
+  assert app.help
+}
+
+#[test("창이 너무 작으면 마우스를 무시한다")]
+fn too_small_ignores_mouse() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(mouse_opts(root))
+  let _ = app.Update(shim.WindowSize(MIN_WIDTH - 1, 10))
+  wheel(&app, true, 1)
+  let _ = app.Update(shim.Click(5, 3))
+  let _ = app.Update(shim.WindowSize(100, 30))
+  assert app.cursor == 0
+  assert app.screen == Screen.List
+}
+
+#[test("마우스를 끄면(--no-mouse) 들어온 휠, 클릭도 무시한다")]
+fn mouse_off_ignores_events() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  assert !app.opts.mouse
+  let _ = app.Update(shim.WindowSize(100, 30))
+  wheel(&app, true, 1)
+  assert app.cursor == 0
+  let y1 = row_y(&app, 1)
+  let _ = app.Update(shim.Click(5, y1))
+  let _ = app.Update(shim.Click(5, y1))
+  assert app.cursor == 0
+  assert app.screen == Screen.List
+}
