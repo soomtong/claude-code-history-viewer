@@ -202,11 +202,7 @@ impl App {
       return Some(self.feed_input(msg))
     }
     if self.editing() { return Some(self.feed_input(msg)) }
-    if self.screen == Screen.Conv {
-      let cmd = self.vp.Update(msg)
-      self.ensure_rendered()
-      return Some(cmd)
-    }
+    // 본문 스크롤은 키(on_conv_key)와 마우스(on_wheel)가 직접 하므로 viewport 에 넘길 메시지가 없다
     None
   }
 
