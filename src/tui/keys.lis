@@ -1,0 +1,112 @@
+// 입력 모드와 공용 이동 키.
+// 모드는 한 번에 하나다: 키, 마우스, 붙여넣기, 화면 그리기가 모두 이 값 하나로 갈린다.
+import "session"
+
+/// 지금 입력을 받는 곳. Normal 이면 화면(Screen)의 키 표를 쓴다.
+pub enum Mode {
+  Normal,
+  /// 목록 필터 입력 (/)
+  Filter,
+  /// 대화 검색 입력 (/)
+  Search,
+  /// 도움말 모달. top 은 상자 안 스크롤 위치
+  Help { top: int },
+  /// 삭제 확인 모달
+  ConfirmDelete(session.DeletePlan),
+  /// 제목 변경 입력창
+  Rename(RenameInput),
+}
+
+/// 목록, 대화, 도움말이 함께 쓰는 이동. 방향은 +1(아래) / -1(위).
+pub enum Nav {
+  Line(int),
+  Quarter(int),
+  Half(int),
+  Page(int),
+  Top,
+  Bottom,
+}
+
+/// 이동 키면 그 이동. 화면마다 다른 키는 각 화면의 키 표가 본다.
+pub fn nav_of(k: string) -> Option<Nav> {
+  match k {
+    "j" | "down" => Some(Nav.Line(1)),
+    "k" | "up" => Some(Nav.Line(-1)),
+    "d" => Some(Nav.Quarter(1)),
+    "u" => Some(Nav.Quarter(-1)),
+    "ctrl+d" => Some(Nav.Half(1)),
+    "ctrl+u" => Some(Nav.Half(-1)),
+    "ctrl+f" | "pgdown" | "space" => Some(Nav.Page(1)),
+    "ctrl+b" | "pgup" => Some(Nav.Page(-1)),
+    "g" | "home" => Some(Nav.Top),
+    "G" | "end" => Some(Nav.Bottom),
+    _ => None,
+  }
+}
+
+/// 한 페이지가 page, 전체가 total 일 때 움직일 양 (목록은 항목, 대화와 도움말은 줄).
+/// 처음/끝은 ±total 이라 받는 쪽이 범위 안으로 자른다.
+pub fn nav_delta(n: Nav, page: int, total: int) -> int {
+  match n {
+    Nav.Line(d) => d,
+    Nav.Quarter(d) => d * max(page / 4, 1),
+    Nav.Half(d) => d * max(page / 2, 1),
+    Nav.Page(d) => d * max(page, 1),
+    Nav.Top => -total,
+    Nav.Bottom => total,
+  }
+}
+
+impl App {
+  pub fn help_open(self: Ref<Self>) -> bool {
+    match self.mode {
+      Mode.Help { .. } => true,
+      _ => false,
+    }
+  }
+
+  pub fn help_top(self: Ref<Self>) -> int {
+    match self.mode {
+      Mode.Help { top } => top,
+      _ => 0,
+    }
+  }
+
+  pub fn filter_editing(self: Ref<Self>) -> bool {
+    match self.mode {
+      Mode.Filter => true,
+      _ => false,
+    }
+  }
+
+  pub fn search_editing(self: Ref<Self>) -> bool {
+    match self.mode {
+      Mode.Search => true,
+      _ => false,
+    }
+  }
+
+  /// 삭제 확인 모달이 떠 있으면 그 계획
+  pub fn delete_plan(self: Ref<Self>) -> Option<session.DeletePlan> {
+    match self.mode {
+      Mode.ConfirmDelete(plan) => Some(plan),
+      _ => None,
+    }
+  }
+
+  /// 제목 변경 입력창이 떠 있으면 그 입력
+  pub fn renaming(self: Ref<Self>) -> Option<RenameInput> {
+    match self.mode {
+      Mode.Rename(r) => Some(r),
+      _ => None,
+    }
+  }
+
+  /// 입력창이 열려 있는지
+  pub fn editing(self: Ref<Self>) -> bool {
+    match self.mode {
+      Mode.Filter | Mode.Search | Mode.Rename(_) => true,
+      _ => false,
+    }
+  }
+}

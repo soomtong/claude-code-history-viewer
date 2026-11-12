@@ -15,7 +15,7 @@ impl App {
   /// 입력창을 연다. 기존 제목을 채워 두어 고쳐 쓰기 쉽게 한다.
   pub fn ask_rename(self: mut Ref<Self>, s: model.Session) {
     if s.path == "" { return }
-    self.renaming = Some(
+    self.mode = Mode.Rename(
       RenameInput { path: s.path, original: s.title, input: s.title },
     )
     self.start_input(s.title)
@@ -29,11 +29,11 @@ impl App {
   ) -> Option<tea.Cmd> {
     match k {
       "esc" => {
-        self.renaming = None
-        self.status = "Rename cancelled"
+        self.mode = Mode.Normal
+        self.notify("Rename cancelled")
       },
       "enter" => {
-        self.renaming = None
+        self.mode = Mode.Normal
         self.apply_rename(r)
       },
       _ => return Some(self.feed_input(key)),
@@ -44,23 +44,25 @@ impl App {
   fn apply_rename(self: mut Ref<Self>, r: RenameInput) {
     let title = session.clean_title(r.input)
     if title == "" {
-      self.status = "Title is empty, not renamed"
+      self.notify("Title is empty, not renamed")
       return
     }
     if title == r.original {
-      self.status = "Title unchanged"
+      self.notify("Title unchanged")
       return
     }
     match session.rename_session(self.opts.root, r.path, title) {
       Ok(saved) => {
         // 목록 메타와 열린 대화를 파일에서 다시 읽는다 (모니터링 이벤트와 같은 경로)
         self.on_files([r.path])
-        if self.has_conv && self.current.path == r.path {
-          if let Ok(s) = session.load_meta(r.path) { self.current = s }
+        if let Some(c) = self.open {
+          if c.session.path == r.path {
+            if let Ok(s) = session.load_meta(r.path) { c.session = s }
+          }
         }
-        self.status = f"Renamed: {saved}"
+        self.notify(f"Renamed: {saved}")
       },
-      Err(e) => self.status = f"Rename failed: {e}",
+      Err(e) => self.notify(f"Rename failed: {e}"),
     }
   }
 
@@ -68,20 +70,14 @@ impl App {
     let w = max(min(self.width - 8, 72), 16)
     let input = self.input_line(r.input, w - 2)
     let lines = [
-      st_title().Render("세션 제목 변경"),
       st_faint().Render(clip("현재: " + r.original, w)),
       "",
       st_user().Render("›") + " " + input,
-      "",
-      modal_hints(
-        [
-          [hint("Save", "enter"), hint("Cancel", "esc")],
-          [hint("Start/end", "^a ^e"), hint("Delete before/after", "^u ^k")],
-        ],
-        w,
-      ),
     ]
-    // lipgloss v2 의 Width 는 테두리(2)와 좌우 여백(2)을 포함한다
-    st_box().Width(w + 4).Render(lines.join("\n"))
+    let hints = [
+      [hint("Save", "enter"), hint("Cancel", "esc")],
+      [hint("Start/end", "^a ^e"), hint("Delete before/after", "^u ^k")],
+    ]
+    framed_box("세션 제목 변경", lines, w, hints, "", st_border())
   }
 }

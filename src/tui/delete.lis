@@ -1,0 +1,124 @@
+// 세션 삭제 확인 모달 (D). 목록에서는 선택한 세션, 대화 화면에서는 현재 세션 (docs/decisions/0005).
+import "go:github.com/charmbracelet/x/ansi"
+import "go:path/filepath"
+import "go:time"
+
+import "model"
+import "session"
+
+impl App {
+  /// 삭제 확인 모달을 띄운다. 검증 실패는 상태줄에 표시하고 모달을 띄우지 않는다.
+  pub fn ask_delete(self: mut Ref<Self>, s: model.Session, from_conv: bool) {
+    // 대화 화면에서 현재 세션을 지우는 경우는 열람 중 차단을 적용하지 않는다
+    let open_id = if from_conv { "" } else { self.current().id }
+    match session.plan_delete(
+      self.opts.root,
+      s.path,
+      self.opts.purge,
+      open_id,
+      self.trash_root,
+      time.Now(),
+    ) {
+      Ok(plan) => self.mode = Mode.ConfirmDelete(plan),
+      Err(e) => self.notify(f"Cannot delete: {e}"),
+    }
+  }
+
+  fn on_modal_key(self: mut Ref<Self>, plan: session.DeletePlan, k: string) {
+    self.mode = Mode.Normal
+    // 기본은 취소. 차단되지 않았고 y 를 눌렀을 때만 실행한다.
+    if k != "y" || plan.blocked.is_some() {
+      self.notify("Delete cancelled")
+      return
+    }
+    let done = match session.execute_delete(
+      self.opts.root,
+      plan,
+      self.trash_root,
+      time.Now(),
+    ) {
+      Ok(_) => {
+        let text = if plan.purge {
+          f"Deleted permanently: {plan.session_id}"
+        } else {
+          f"Moved to trash: {plan.trash_dir}"
+        }
+        self.notify(text)
+        // 열람 중이던 세션을 지웠으면 목록으로 돌아간다
+        if self.screen == Screen.Conv {
+          self.open = None
+          self.screen = Screen.List
+          self.notify_dirs()
+        }
+        true
+      },
+      Err(e) => {
+        self.notify(f"Delete failed: {e}")
+        false
+      },
+    }
+    // 지운 한 건만 목록에서 뺀다. 실패했거나 목록을 아직 읽지 않았으면(경로로 바로 연 경우) 전부 다시 읽는다.
+    if done && !self.sessions.is_empty() {
+      self.on_files([plan.items[0]])
+      return
+    }
+    let cursor = self.cursor
+    self.reload_list()
+    self.cursor = cursor
+    self.clamp_list()
+  }
+
+  /// 삭제 확인 상자. 키 안내는 아래 테두리에 두어, 창이 낮아 본문이 잘려도 보인다.
+  fn view_modal(self: Ref<Self>, plan: session.DeletePlan) -> string {
+    let mut lines = Slice.new<string>()
+    let found = self.sessions.find(|s| s.id == plan.session_id)
+    let title = found.map_or(plan.session_id, |s| s.title)
+    let mode = if plan.purge {
+      st_error().Render("영구 삭제 (--purge, 되돌릴 수 없음)")
+    } else {
+      "휴지통으로 이동"
+    }
+    // 테두리와 여백(4칸)과 화면 여백을 빼고 경로를 줄인다
+    let w = max(min(90, self.width - 8), 16)
+    lines = lines.append(clip(mode, w))
+    lines = lines.append(clip(title, min(70, w)))
+    lines = lines.append("")
+    lines = lines.append(clip(f"대상 ({self.opts.root} 기준):", w))
+    for item in plan.items {
+      let rel = filepath.Rel(self.opts.root, item).unwrap_or(item)
+      let suffix = if item == plan.items[0] { "" } else { "  (부속)" }
+      lines = lines.append(
+        "  " + clip(rel, w - 2 - ansi.StringWidth(suffix)) + suffix,
+      )
+    }
+    if !plan.purge {
+      lines = lines.append("이동 위치:")
+      lines = lines.append("  " + clip(plan.trash_dir, w - 2))
+    }
+    if let Some(next) = found.and_then(|s| s.continued_in) {
+      lines = lines.append(st_warn().Render(clip(
+        f"주의: 이 세션은 {next} 로 이어졌습니다",
+        w,
+      )))
+    }
+    if let Some(reason) = plan.blocked {
+      lines = lines.append("")
+      lines = lines.append(st_error().Render(clip(
+        "삭제할 수 없습니다: " + reason,
+        w,
+      )))
+    }
+    let hints = if plan.blocked.is_some() {
+      [[hint("Close", "any key")]]
+    } else {
+      [[hint("Delete", "y")], [hint("Cancel", "other keys (default)")]]
+    }
+    // 위아래 테두리와 화면 여백 1줄씩을 뺀 만큼만 보인다
+    let shown = lines[..min(lines.length(), max(self.height - 4, 1))]
+    let mut inner = min(44, w)
+    for l in shown {
+      inner = max(inner, ansi.StringWidth(l))
+    }
+    framed_box("세션 삭제", shown, inner, hints, "", st_del())
+  }
+}

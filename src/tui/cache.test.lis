@@ -49,7 +49,7 @@ fn lazy_render() {
   let mut app = new_app(md_opts(root))
   let _ = app.Update(shim.WindowSize(80, 24))
   let _ = app.Update(shim.Key("enter"))
-  assert app.spans.length() == 400
+  assert app.spans().length() == 400
   let first = app.md_renders
   assert first > 0
   assert first < 30
@@ -57,7 +57,7 @@ fn lazy_render() {
   let after_bottom = app.md_renders
   assert after_bottom > first
   assert after_bottom < 60
-  let last = app.spans[app.spans.length() - 1]
+  let last = app.spans()[app.spans().length() - 1]
   assert last.full
   // 다시 맨 위로 가면 캐시를 쓰므로 렌더 횟수가 늘지 않는다
   let _ = app.Update(shim.Key("g"))
@@ -77,9 +77,9 @@ fn keeps_anchor() {
   for _ in 0..20 {
     let _ = app.Update(shim.Key("]"))
   }
-  let before = app.spans[app.span_at(app.vp.YOffset())].msg
+  let before = app.spans()[app.span_at(app.vp.YOffset())].msg
   app.toggles.thinking = true
   app.relayout()
-  let after = app.spans[app.span_at(app.vp.YOffset())].msg
+  let after = app.spans()[app.span_at(app.vp.YOffset())].msg
   assert before == after
 }

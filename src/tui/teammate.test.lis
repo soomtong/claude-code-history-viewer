@@ -69,7 +69,7 @@ fn teammate_filter() {
   }
   let mut app = open_team(root)
   // 사람 프롬프트 2개만 프롬프트 칸
-  assert app.spans.filter(|sp| sp.prompt).length() == 2
+  assert app.spans().filter(|sp| sp.prompt).length() == 2
   assert ansi.Strip(app.frame()).contains("Prompts 2")
   press(&app, ["r"])
   assert app.role == RoleFilter.User

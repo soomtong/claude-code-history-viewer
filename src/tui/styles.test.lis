@@ -22,7 +22,7 @@ fn too_small() {
   let _ = app.Update(shim.WindowSize(MIN_WIDTH - 1, 10))
   assert ansi.Strip(app.frame()).contains("Window too small")
   press(&app, ["D", "enter"])
-  assert app.modal.is_none()
+  assert app.delete_plan().is_none()
   assert app.screen == Screen.List
   // 다시 커지면 원래 화면
   let _ = app.Update(shim.WindowSize(80, 20))

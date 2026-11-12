@@ -39,7 +39,7 @@ fn compact_collapsed() {
   assert !s.contains("system-reminder")
   assert !s.contains("2. 진행: 테스트를 추가했다.")
   assert s.contains("Prompts 2")
-  assert app.spans.filter(|sp| sp.prompt).length() == 2
+  assert app.spans().filter(|sp| sp.prompt).length() == 2
   press(&app, ["e"])
   let open = ansi.Strip(app.frame())
   assert open.contains("  2. 진행: 테스트를 추가했다.")

@@ -1,0 +1,497 @@
+// 열린 대화 하나의 상태. 세션을 열 때 통째로 새로 만들어지므로 앞 세션의 검색어나 새 메시지 수가 남지 않는다.
+// 목록으로 돌아가도 App.open 은 그대로다(감시와 삭제 차단에 쓴다). 새로고침이나 삭제가 비운다.
+import "go:charm.land/bubbletea/v2"
+import "go:charm.land/glamour/v2"
+import "go:charm.land/lipgloss/v2"
+
+import "model"
+import "session"
+
+/// 대화 뷰에서 메시지 하나가 차지하는 줄 범위 (메시지-줄 매핑)
+pub struct Span {
+  pub msg: int, // conv.messages 의 인덱스
+  pub start: int,
+  pub lines: int,
+  pub prompt: bool,
+  pub full: bool, // glamour 까지 적용됐는지 (false 면 평문 자리표시)
+}
+
+pub struct ConvView {
+  pub session: model.Session,
+  pub conv: mut session.Conversation,
+  tail: session.Tail,
+  pub spans: mut Slice<Span>,
+  content: string, // viewport 에 넣은 전체 내용
+  plain_lines: mut Slice<string>, // 검색용으로 ANSI 를 벗긴 소문자 줄 (지연 계산)
+  pub search: string,
+  pub matches: mut Slice<int>,
+  pub match_idx: int,
+  pub follow: bool,
+  pub new_count: int,
+  announced_next: string,
+}
+
+/// 세션 파일을 읽어 대화 상태를 만든다. 읽기에 실패하면 아무것도 바뀌지 않는다.
+fn load_conv(s: model.Session, follow: bool) -> Result<mut Ref<ConvView>, error> {
+  let mut conv = session.new_conversation(false)
+  let mut tail = session.new_tail(s.path)
+  let _ = session.feed(&conv, &tail)?
+  let announced_next = conv.continued_in.unwrap_or("")
+  let mut view = ConvView {
+    session: s,
+    conv,
+    tail,
+    spans: [],
+    plain_lines: [],
+    matches: [],
+    follow,
+    announced_next,
+    ..,
+  }
+  Ok(&view)
+}
+
+/// line 줄이 속한 span 인덱스
+fn span_index(spans: Slice<Span>, line: int) -> int {
+  let mut idx = 0
+  for (i, s) in spans.enumerate() {
+    if s.start <= line { idx = i } else { break }
+  }
+  idx
+}
+
+fn on_off(name: string, on: bool) -> string {
+  if on { f"{name} shown" } else { f"{name} hidden" }
+}
+
+impl App {
+  /// 열어 둔 대화가 있는지 (목록 화면에 있어도 true)
+  pub fn has_conv(self: Ref<Self>) -> bool {
+    self.open.is_some()
+  }
+
+  /// 열어 둔 세션. 없으면 빈 값.
+  pub fn current(self: Ref<Self>) -> model.Session {
+    self.open.map_or_else(|| model.Session { .. }, |c| c.session)
+  }
+
+  pub fn messages(self: Ref<Self>) -> Slice<model.Message> {
+    self.open.map_or([], |c| c.conv.messages)
+  }
+
+  pub fn spans(self: Ref<Self>) -> Slice<Span> {
+    self.open.map_or([], |c| c.spans)
+  }
+
+  pub fn search(self: Ref<Self>) -> string {
+    self.open.map_or("", |c| c.search)
+  }
+
+  pub fn matches(self: Ref<Self>) -> Slice<int> {
+    self.open.map_or([], |c| c.matches)
+  }
+
+  pub fn match_idx(self: Ref<Self>) -> int {
+    self.open.map_or(0, |c| c.match_idx)
+  }
+
+  pub fn follow(self: Ref<Self>) -> bool {
+    self.open.map_or(false, |c| c.follow)
+  }
+
+  pub fn new_count(self: Ref<Self>) -> int {
+    self.open.map_or(0, |c| c.new_count)
+  }
+
+  /// 검색어와 매치를 지운다
+  fn clear_search(self: mut Ref<Self>) {
+    let Some(c) = self.open else {
+      return
+    }
+    c.search = ""
+    c.matches = []
+  }
+
+  fn open_path(self: mut Ref<Self>, path: string) {
+    match session.load_meta(path) {
+      Ok(s) => self.open_session(s),
+      Err(e) => self.notify(f"Open failed: {e}"),
+    }
+  }
+
+  pub fn open_session(self: mut Ref<Self>, s: model.Session) {
+    // 읽기에 성공한 뒤에만 상태를 바꾼다 (실패하면 지금 대화를 그대로 둔다)
+    let mut view = match load_conv(s, self.opts.watch) {
+      Ok(v) => v,
+      Err(e) => {
+        self.notify(f"Read failed: {e}")
+        return
+      },
+    }
+    self.open = Some(view)
+    self.screen = Screen.Conv
+    self.mode = Mode.Normal
+    self.status = ""
+    self.cache = Map.new<string, string>()
+    self.vp.SetContent("")
+    self.vp.GotoTop()
+    self.relayout_with(self.starts_at_bottom(s))
+    self.notify_dirs()
+  }
+
+  /// 대화 화면에서 목록 순서대로 옆 세션을 연다 (0019).
+  /// delta -1 은 위(더 최근), 1 은 아래(더 예전). 목록은 지금 범위와 필터 그대로다.
+  fn open_adjacent(self: mut Ref<Self>, delta: int) {
+    if self.sessions.is_empty() { self.reload_list() }
+    let mut at = -1
+    for (i, r) in self.rows.enumerate() {
+      // id 대신 경로로 찾는다: 경로는 항상 하나뿐이다
+      if self.sessions[r].path == self.current().path {
+        at = i
+        break
+      }
+    }
+    if at < 0 {
+      self.notify("Current session is not in the list (scope or filter)")
+      return
+    }
+    let next = at + delta
+    if next < 0 {
+      self.notify("No newer session")
+      return
+    }
+    if next >= self.rows.length() {
+      self.notify("No older session")
+      return
+    }
+    let s = self.sessions[self.rows[next]]
+    self.open_session(s)
+    // 읽기에 실패하면 open_session 이 상태만 남기고 지금 세션을 유지한다
+    if self.current().path != s.path { return }
+    self.cursor = next
+    self.clamp_list()
+    self.notify(f"Session {next + 1}/{self.rows.length()}")
+  }
+
+  fn back_to_list(self: mut Ref<Self>) {
+    self.screen = Screen.List
+    if self.sessions.is_empty() { self.reload_list() }
+    self.select_id(self.current().id)
+  }
+
+  fn on_conv_key(self: mut Ref<Self>, k: string) -> Option<tea.Cmd> {
+    if let Some(n) = nav_of(k) {
+      self.scroll_conv(nav_delta(n, self.vp.Height(), self.vp.TotalLineCount()))
+      return None
+    }
+    match k {
+      "q" => return self.quit(),
+      "?" => self.mode = Mode.Help { top: 0 },
+      "]" => self.jump_message(1, false),
+      "[" => self.jump_message(-1, false),
+      "n" => {
+        if self.search_active() {
+          self.jump_match(1, false)
+        } else {
+          self.jump_message(1, false)
+        }
+      },
+      "N" => {
+        if self.search_active() {
+          self.jump_match(-1, false)
+        } else {
+          self.jump_message(-1, false)
+        }
+      },
+      "}" => self.jump_message(1, true),
+      "{" => self.jump_message(-1, true),
+      "/" => {
+        self.clear_search()
+        self.mode = Mode.Search
+        self.start_input("")
+      },
+      "esc" => {
+        if self.search_active() {
+          self.clear_search()
+        } else {
+          self.back_to_list()
+        }
+      },
+      "h" | "left" | "backspace" => self.back_to_list(),
+      "H" => self.open_adjacent(-1),
+      "L" => self.open_adjacent(1),
+      "y" => self.copy_resume(self.current().id),
+      "F" => self.toggle_follow(),
+      "o" => self.open_continued(),
+      "r" => {
+        self.role = self.role.next()
+        self.view_changed(f"Role: {self.role.label()}")
+      },
+      "x" => {
+        self.toggles.tools = !self.toggles.tools
+        self.view_changed(on_off("Tool calls", self.toggles.tools))
+      },
+      "t" => {
+        self.toggles.thinking = !self.toggles.thinking
+        self.view_changed(on_off("Thinking", self.toggles.thinking))
+      },
+      "c" => {
+        self.toggles.code = !self.toggles.code
+        self.view_changed(on_off("Code changes", self.toggles.code))
+      },
+      "e" => {
+        self.toggles.expand = !self.toggles.expand
+        self.view_changed(on_off("Expand folded blocks", self.toggles.expand))
+      },
+      "D" => self.ask_delete(self.current(), true),
+      "R" => self.ask_rename(self.current()),
+      "P" => {
+        self.toggles.debug = !self.toggles.debug
+        self.view_changed(on_off(
+          "Debug (meta, unknown blocks)",
+          self.toggles.debug,
+        ))
+      },
+      _ => (),
+    }
+    if self.screen == Screen.Conv { self.after_scroll() }
+    None
+  }
+
+  /// 보기 설정(역할, 토글)이 바뀐 뒤: 알리고 다시 배치한다
+  fn view_changed(self: mut Ref<Self>, status: string) {
+    self.notify(status)
+    self.relayout()
+  }
+
+  /// 대화 본문을 delta 줄 움직인다 (키와 휠이 함께 쓴다)
+  pub fn scroll_conv(self: mut Ref<Self>, delta: int) {
+    if delta > 0 { self.vp.LineDown(delta) } else { self.vp.LineUp(-delta) }
+    self.after_scroll()
+  }
+
+  /// 다음/이전 메시지(또는 프롬프트) 시작 줄로 이동
+  pub fn jump_message(self: mut Ref<Self>, dir: int, prompts_only: bool) {
+    let y = self.vp.YOffset()
+    let spans = self.spans()
+    if dir > 0 {
+      for s in spans {
+        if s.start > y && (!prompts_only || s.prompt) {
+          self.vp.SetYOffset(s.start)
+          return
+        }
+      }
+    } else {
+      let mut target = -1
+      for s in spans {
+        if s.start >= y { break }
+        if !prompts_only || s.prompt { target = s.start }
+      }
+      if target >= 0 { self.vp.SetYOffset(target) }
+    }
+  }
+
+  /// 현재 화면 맨 위 줄이 속한 span 인덱스
+  pub fn span_at(self: Ref<Self>, line: int) -> int {
+    span_index(self.spans(), line)
+  }
+
+  /// 대화 화면 본문 높이: 헤더 2줄과 가로선 1줄(compact 면 생략) + 하단 1줄을 뺀다
+  pub fn vp_height(self: Ref<Self>) -> int {
+    max(self.height - self.conv_header_rows() - FOOTER_ROWS, 1)
+  }
+
+  /// 대화 헤더 줄 수. compact 이거나 창이 낮아 본문이 CONV_BODY_MIN 줄도 안 남으면 헤더를 접는다.
+  fn conv_header_rows(self: Ref<Self>) -> int {
+    let short = self.height < CONV_HEADER_ROWS + CONV_BODY_MIN + FOOTER_ROWS
+    if self.opts.compact || short { 0 } else { CONV_HEADER_ROWS }
+  }
+
+  /// 대화 본문 폭: 왼쪽 여백 1열, 오른쪽 스크롤바 1열과 그 앞 여백 1열을 뺀다
+  fn content_width(self: Ref<Self>) -> int {
+    max(self.width - 3, 20)
+  }
+
+  fn ensure_renderer(self: mut Ref<Self>, width: int) {
+    if self.opts.plain {
+      self.md = None
+      return
+    }
+    if self.md.is_some() && self.md_width == width { return }
+    self.cache = Map.new<string, string>()
+    // 테마는 setup_colors 가 확정해 넘긴다. glamour 는 TrueColor 로 그리고,
+    // 터미널 색 지원 수준과 NO_COLOR 에 맞춰 낮추는 일은 Bubble Tea 가 한다 (0021)
+    self.md = glamour
+      .NewTermRenderer(
+        glamour.WithStandardStyle(self.opts.theme),
+        glamour.WithWordWrap(max(width - 4, 10)),
+      )
+      .ok()
+    self.md_width = width
+  }
+
+  fn view_conv(self: Ref<Self>) -> string {
+    let mut out = Slice.new<string>()
+    if self.conv_header_rows() > 0 {
+      let base = st_bar()
+      let crumbs = over(st_faint(), base).Render("Session › ") +
+      over(st_title(), base).Render(self.current().title)
+      let msgs = self.messages()
+      let range = msgs
+        .get(0)
+        .map_or("", |m| time_range(m.time, msgs[msgs.length() - 1].time))
+      out = out.append(header_bar(self.opts.version, crumbs, range, self.width))
+      let flags = self.flag_text()
+      let right = if flags == "" { "" } else { st_faint().Render(flags + " ") }
+      out = out.append(fit(
+        st_faint().Render(" " + self.conv_meta()),
+        right,
+        self.width,
+        lipgloss.NewStyle(),
+      ))
+      out = out.append(header_rule(self.width))
+    }
+    out = out.append(self.body_view())
+    let search = self.search_status()
+    let hints = if self.search_editing() {
+      [[hint("Confirm", "↵"), hint("Cancel", "esc")]]
+    } else if search != "" {
+      [[hint("Match", "n N"), hint("Clear", "esc")], [hint("Help", "?")]]
+    } else {
+      [
+        [
+          label("Move"),
+          hint("prompt", "{ }"),
+          hint("message", "[ ]"),
+          hint("session", "H L"),
+          hint("list", "h"),
+        ],
+        [
+          hint("Search", "/"),
+          label("Show"),
+          mnemonic("t", "hinking"),
+          hint("tool", "x"),
+          mnemonic("c", "ode"),
+        ],
+        [hint("Help", "?")],
+      ]
+    }
+    out = out.append(footer(
+      self.status,
+      search,
+      hints,
+      self.conv_position(),
+      self.width,
+    ))
+    out.join("\n")
+  }
+
+  /// 왼쪽 여백 1칸 + 본문 + 오른쪽 1열 스크롤바
+  fn body_view(self: Ref<Self>) -> string {
+    let rows = self.vp.View().split("\n")
+    let bar = self.scrollbar(rows.length())
+    let mut out = Slice.new<string>()
+    for (i, r) in rows.enumerate() {
+      out = out.append(" " + r + " " + bar[i])
+    }
+    out.join("\n")
+  }
+
+  /// 스크롤바: 손잡이 ┃, 길 │, 프롬프트 위치 ◆. 내용이 한 화면에 들어오면 비운다.
+  fn scrollbar(self: Ref<Self>, h: int) -> Slice<string> {
+    let mut cells = Slice.new<string>()
+    let total = self.vp.TotalLineCount()
+    if total <= h {
+      for _ in 0..h {
+        cells = cells.append(" ")
+      }
+      return cells
+    }
+    let mut marks = Slice.new<bool>()
+    for _ in 0..h {
+      marks = marks.append(false)
+    }
+    for s in self.spans() {
+      if s.prompt { marks[min(s.start * h / total, h - 1)] = true }
+    }
+    let len = max(h * h / total, 1)
+    // 맨 위면 0, 맨 아래면 h - len 에 닿도록 남은 칸에 비례해 놓는다
+    let start = min(self.vp.YOffset() * (h - len) / (total - h), h - len)
+    for i in 0..h {
+      let cell = if marks[i] {
+        st_user().Render("◆")
+      } else if i >= start && i < start + len {
+        "┃"
+      } else {
+        st_faint().Render("│")
+      }
+      cells = cells.append(cell)
+    }
+    cells
+  }
+
+  /// 헤더 둘째 줄: 브랜치, 폴더, 메시지/프롬프트 수
+  fn conv_meta(self: Ref<Self>) -> string {
+    let msgs = self.messages()
+    let cur = self.current()
+    let prompts = msgs.filter(|m| m.is_prompt).length()
+    let count = msgs
+      .filter(|m| m.is_prompt || m.role == model.Role.Assistant)
+      .length()
+    let mut parts = Slice.new<string>()
+    if cur.git_branch != "" { parts = parts.append(cur.git_branch) }
+    if cur.cwd != "" { parts = parts.append(cur.cwd) }
+    parts = parts.append(f"Messages {count}")
+    parts = parts.append(f"Prompts {prompts}")
+    parts.join(" · ")
+  }
+
+  /// 하단 오른쪽: 모니터링 상태와 위치
+  fn conv_position(self: Ref<Self>) -> string {
+    let mut parts = Slice.new<string>()
+    let live = self.live_text()
+    if live != "" { parts = parts.append(live) }
+    let spans = self.spans()
+    if spans.is_empty() {
+      parts = parts.append("Msg 0")
+      return parts.join(" · ")
+    }
+    let i = self.span_at(self.vp.YOffset())
+    let mut p = 0
+    let mut total_p = 0
+    for (k, s) in spans.enumerate() {
+      if !s.prompt { continue }
+      total_p += 1
+      if k <= i { p += 1 }
+    }
+    if total_p > 0 { parts = parts.append(f"Prompt {p}/{total_p}") }
+    parts = parts.append(f"Msg {i + 1}/{spans.length()}")
+    parts = parts.append(f"{(self.vp.ScrollPercent() * 100.0) as int}%")
+    parts.join(" · ")
+  }
+
+  /// 기본과 다른 보기 설정만 나열한다
+  fn flag_text(self: Ref<Self>) -> string {
+    let t = self.toggles
+    let mut flags = Slice.new<string>()
+    if self.role != RoleFilter.All {
+      flags = flags.append(f"Role {self.role.label()}")
+    }
+    if t.tools { flags = flags.append("Tools") }
+    if t.thinking { flags = flags.append("Thinking") }
+    if t.code { flags = flags.append("Code") }
+    if t.expand { flags = flags.append("Expanded") }
+    if t.debug {
+      let unknown = self.open.map_or(0, |c| c.conv.unknown_total())
+      let broken = self.open.map_or(0, |c| c.conv.broken)
+      flags = flags.append(f"Debug (unknown {unknown}, broken {broken})")
+    }
+    flags.join(" · ")
+  }
+
+  /// 대화 본문을 움직인 뒤: 보이는 범위를 렌더하고, 끝에 닿았으면 새 메시지 표시를 지운다.
+  pub fn after_scroll(self: mut Ref<Self>) {
+    self.ensure_rendered()
+    if self.vp.AtBottom() { if let Some(c) = self.open { c.new_count = 0 } }
+  }
+}

@@ -3,7 +3,6 @@
 import "go:charm.land/lipgloss/v2"
 import "go:github.com/charmbracelet/x/ansi"
 import "go:strings"
-import "go:time"
 
 /// 하단 힌트 하나. 설명은 흐리게, 키는 진하게 그린다.
 pub enum Hint {
@@ -155,6 +154,7 @@ pub fn modal_hints(groups: Slice<Slice<Hint>>, width: int) -> string {
 }
 
 /// 둥근 테두리 상자. 제목은 위 테두리에, 키 안내와 위치(right)는 아래 테두리에 넣는다.
+/// 도움말, 삭제 확인, 제목 변경이 모두 이 상자를 쓴다. b 는 테두리 선 스타일.
 /// lines 는 폭 inner 안이어야 한다. 아래 테두리에 다 들어가지 않으면 키 안내를 줄인다.
 pub fn framed_box(
   title: string,
@@ -162,8 +162,8 @@ pub fn framed_box(
   inner: int,
   hints: Slice<Slice<Hint>>,
   right: string,
+  b: lipgloss.Style,
 ) -> string {
-  let b = st_border()
   let t = " " + title + " "
   let tw = ansi.StringWidth(t)
   let w = max(inner, tw + 1)
@@ -284,79 +284,6 @@ pub fn header_bar(
   fit(left, r, width, base)
 }
 
-fn parse_local(ts: string) -> Option<time.Time> {
-  time.Parse(time.RFC3339, ts).ok().map(|t| t.Local())
-}
-
-/// 목록의 날짜 묶음: 오늘, 어제, 최근 7일, 그 이전은 월 단위
-pub fn group_label(ts: string, now: time.Time) -> string {
-  let Some(t) = parse_local(ts) else {
-    return "날짜 없음"
-  }
-  let day = t.Format("2006-01-02")
-  if day == now.Format("2006-01-02") { return "오늘" }
-  if day == now.AddDate(0, 0, -1).Format("2006-01-02") { return "어제" }
-  if now.Sub(t) < (7 * 24 as time.Duration) * time.Hour { return "최근 7일" }
-  t.Format("2006년 1월")
-}
-
-/// 목록 항목 오른쪽 시각: 이틀 안이면 시:분, 올해면 월-일 시:분, 아니면 날짜
-pub fn short_time(ts: string, now: time.Time) -> string {
-  let Some(t) = parse_local(ts) else {
-    return ""
-  }
-  let day = t.Format("2006-01-02")
-  if day == now.Format("2006-01-02") || day == now
-    .AddDate(0, 0, -1)
-    .Format("2006-01-02") {
-    return t.Format("15:04")
-  }
-  if t.Year() == now.Year() { return t.Format("01-02 15:04") }
-  day
-}
-
-/// 대화의 시작~끝 시각. 같은 날이면 끝은 시:분만.
-pub fn time_range(first: string, last: string) -> string {
-  let Some(a) = parse_local(first) else {
-    return ""
-  }
-  let start = a.Format("2006-01-02 15:04")
-  let Some(b) = parse_local(last) else {
-    return start
-  }
-  if b.Sub(a) < time.Minute { return start }
-  let end = if a.Format("2006-01-02") == b.Format("2006-01-02") {
-    b.Format("15:04")
-  } else {
-    b.Format("2006-01-02 15:04")
-  }
-  f"{start} – {end}"
-}
-
-/// 프롬프트 앞 시간 구분선: 앞 메시지와 5분 이상 떨어졌을 때만. 날짜가 바뀌면 날짜도.
-pub fn time_gap_label(prev: string, cur: string) -> string {
-  let Some(a) = parse_local(prev) else {
-    return ""
-  }
-  let Some(b) = parse_local(cur) else {
-    return ""
-  }
-  if b.Sub(a) < (5 as time.Duration) * time.Minute { return "" }
-  if a.Format("2006-01-02") == b.Format("2006-01-02") {
-    b.Format("15:04")
-  } else {
-    b.Format("2006-01-02 15:04")
-  }
-}
-
-/// 목록의 날짜 묶음 제목. 줄 끝까지 흐린 선을 그어 묶음 경계를 보인다.
-/// 오른쪽 1칸은 항목 시각 뒤 여백과 맞춘다.
-pub fn group_header(label: string, width: int) -> string {
-  let rule = max(width - ansi.StringWidth(label) - 4, 0)
-  st_group().Render("  " + label) +
-  st_faint().Render(" " + strings.Repeat("─", rule))
-}
-
 /// 대화 헤더와 본문 사이 흐린 가로선 (본문 왼쪽 여백 1칸과 맞춘다)
 pub fn header_rule(width: int) -> string {
   st_faint().Render(" " + strings.Repeat("─", max(width - 2, 0)))
@@ -370,49 +297,4 @@ pub fn divider(label: string, width: int) -> string {
     strings.Repeat("─", side) + text +
     strings.Repeat("─", max(width - side - ansi.StringWidth(text), 2)),
   )
-}
-
-/// 목록 화면의 한 줄: 묶음 사이 빈 줄, 묶음 제목, 세션 항목의 몇 번째 줄
-pub enum ListLine {
-  Gap,
-  Group(string),
-  Item { row: int, part: int },
-}
-
-/// 목록 줄 배치. rows 의 i 번째 세션 시각이 times[i].
-pub fn list_lines(
-  times: Slice<string>,
-  per_item: int,
-  now: time.Time,
-) -> Slice<ListLine> {
-  let mut out = Slice.new<ListLine>()
-  let mut prev = ""
-  for (i, ts) in times.enumerate() {
-    let label = group_label(ts, now)
-    if i == 0 || label != prev {
-      if i > 0 { out = out.append(ListLine.Gap) }
-      out = out.append(ListLine.Group(label))
-      prev = label
-    }
-    for part in 0..per_item {
-      out = out.append(ListLine.Item { row: i, part })
-    }
-  }
-  out
-}
-
-/// row 번째 항목의 (첫 줄, 마지막 줄). 바로 위가 묶음 제목이면 첫 줄을 제목으로 잡는다.
-pub fn item_bounds(lines: Slice<ListLine>, row: int) -> (int, int) {
-  let mut first = -1
-  let mut last = -1
-  for (i, l) in lines.enumerate() {
-    if let ListLine.Item { row: r, .. } = l {
-      if r == row {
-        if first < 0 { first = i }
-        last = i
-      }
-    }
-  }
-  if first > 0 { if let ListLine.Group(_) = lines[first - 1] { first -= 1 } }
-  (first, last)
 }

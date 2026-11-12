@@ -45,7 +45,15 @@ struct Cli {
   target: string,
 }
 
-fn parse_args(args: Slice<string>) -> Result<Cli, string> {
+/// 인자를 읽은 결과: 실행, 또는 안내만 출력하고 끝내기
+enum Parsed {
+  Run(Cli),
+  Help,
+  Version,
+}
+
+/// 잘못된 인자면 Err(안내 문구)
+fn parse_args(args: Slice<string>) -> Result<Parsed, string> {
   let mut cli = Cli { scope: session.Scope.Cwd, .. }
   let mut i = 0
   while i < args.length() {
@@ -67,8 +75,8 @@ fn parse_args(args: Slice<string>) -> Result<Cli, string> {
         }
         cli.theme = v
       },
-      "-h" | "--help" => return Err(""),
-      "--version" => return Err("version"),
+      "-h" | "--help" => return Ok(Parsed.Help),
+      "--version" => return Ok(Parsed.Version),
       _ => {
         if a.starts_with("--theme=") {
           cli.theme = strings.TrimPrefix(a, "--theme=")
@@ -83,7 +91,7 @@ fn parse_args(args: Slice<string>) -> Result<Cli, string> {
     }
     i += 1
   }
-  Ok(cli)
+  Ok(Parsed.Run(cli))
 }
 
 /// 세션 id 또는 jsonl 경로를 실제 파일 경로로 바꾼다.
@@ -118,18 +126,16 @@ fn print_list(opts: tui.Options) {
 
 fn main() {
   let cli = match parse_args(os.Args[1..]) {
-    Ok(c) => c,
-    Err(msg) => {
-      if msg == "" {
-        fmt.Println(USAGE)
-        os.Exit(0)
-      }
-      if msg == "version" {
-        fmt.Println(f"cci {VERSION}")
-        os.Exit(0)
-      }
-      die(f"{msg}\n\n{USAGE}")
+    Ok(Parsed.Run(c)) => c,
+    Ok(Parsed.Help) => {
+      fmt.Println(USAGE)
+      return
     },
+    Ok(Parsed.Version) => {
+      fmt.Println(f"cci {VERSION}")
+      return
+    },
+    Err(msg) => die(f"{msg}\n\n{USAGE}"),
   }
   let cfg = match config.load() {
     Ok(c) => c,
@@ -161,6 +167,7 @@ fn main() {
     plain: false,
     version: VERSION,
     mouse: cfg.mouse && !cli.no_mouse,
+    defer_list: true,
   }
   if cli.list {
     print_list(opts)

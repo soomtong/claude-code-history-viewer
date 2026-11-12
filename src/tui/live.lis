@@ -23,8 +23,8 @@ impl App {
 
   pub fn watch_dirs(self: Ref<Self>) -> Slice<string> {
     let mut dirs = self.dirs.clone()
-    if self.has_conv {
-      let d = filepath.Dir(self.current.path)
+    if let Some(c) = self.open {
+      let d = filepath.Dir(c.session.path)
       if !dirs.contains(d) { dirs = dirs.append(d) }
     }
     dirs
@@ -39,7 +39,7 @@ impl App {
     let keep = self.selected().map_or("", |s| s.id)
     let mut list_changed = false
     for p in paths {
-      if self.has_conv && p == self.current.path { self.refresh_conv() }
+      if self.has_conv() && p == self.current().path { self.refresh_conv() }
       if self.dirs.contains(filepath.Dir(p)) && session.is_session_file(
         filepath.Base(p),
       ) {
@@ -60,58 +60,81 @@ impl App {
     for s in self.sessions {
       if s.path != path { kept = kept.append(s) }
     }
-    if let Ok(s) = session.load_meta(path) { kept = kept.append(s) }
+    if let Some(s) = self.fresh_meta(path) { kept = kept.append(s) }
     self.sessions = kept
+  }
+
+  /// 파일의 최신 목록 메타. 열어 둔 세션이면 이미 증분으로 읽어 둔 대화에서 만든다
+  /// (진행 중인 큰 세션을 이벤트마다 처음부터 다시 읽지 않는다). 파일이 없으면 None.
+  fn fresh_meta(self: Ref<Self>, path: string) -> Option<model.Session> {
+    if let Some(c) = self.open {
+      if c.session.path == path {
+        let info = os.Stat(path).ok()?
+        return Some(session.build_session(
+          path,
+          info.Size(),
+          info.ModTime().Unix(),
+          &c.conv,
+        ))
+      }
+    }
+    session.load_meta(path).ok()
   }
 
   /// 열린 세션의 새 줄을 읽어 반영한다. follow 중이고 맨 아래였으면 따라 내려간다.
   pub fn refresh_conv(self: mut Ref<Self>) {
-    let before = self.spans.length()
+    let Some(c) = self.open else {
+      return
+    }
+    let before = c.spans.length()
     let at_bottom = self.vp.AtBottom()
-    let read = match session.feed(&self.conv, &self.tail) {
+    let read = match session.feed(&c.conv, &c.tail) {
       Ok(r) => r,
       Err(e) => {
-        self.status = f"Read failed: {e}"
+        self.notify(f"Read failed: {e}")
         return
       },
     }
     if read.added == 0 && !read.reset { return }
-    if self.follow && at_bottom {
+    if c.follow && at_bottom {
       self.relayout_with(true)
-      self.new_count = 0
+      c.new_count = 0
     } else {
       self.relayout()
-      let diff = self.spans.length() - before
-      if diff > 0 { self.new_count += diff }
+      let diff = c.spans.length() - before
+      if diff > 0 { c.new_count += diff }
     }
-    if let Some(next) = self.conv.continued_in {
-      if next != self.announced_next {
-        self.announced_next = next
-        self.status = f"Continued in {next} (open o)"
+    if let Some(next) = c.conv.continued_in {
+      if next != c.announced_next {
+        c.announced_next = next
+        self.notify(f"Continued in {next} (open o)")
       }
     }
   }
 
   pub fn toggle_follow(self: mut Ref<Self>) {
-    self.follow = !self.follow
-    if self.follow {
+    let Some(c) = self.open else {
+      return
+    }
+    c.follow = !c.follow
+    if c.follow {
       self.relayout_with(true)
-      self.new_count = 0
-      self.status = "Follow on: tracking new messages"
+      c.new_count = 0
+      self.notify("Follow on: tracking new messages")
     } else {
-      self.status = "Follow off"
+      self.notify("Follow off")
     }
   }
 
   /// continued-in 으로 이어진 세션을 연다.
   pub fn open_continued(self: mut Ref<Self>) {
-    let Some(next) = self.conv.continued_in else {
-      self.status = "No continued session"
+    let Some(next) = self.open.and_then(|c| c.conv.continued_in) else {
+      self.notify("No continued session")
       return
     }
     match session.find_session(self.opts.root, next) {
       Some(p) => self.open_path(p),
-      None => self.status = f"Continued session file not found: {next}",
+      None => self.notify(f"Continued session file not found: {next}"),
     }
   }
 
@@ -128,12 +151,13 @@ impl App {
   pub fn live_text(self: Ref<Self>) -> string {
     if !self.opts.watch { return "" }
     let mut parts = Slice.new<string>()
-    if self.follow {
+    if self.follow() {
       parts = parts.append("● Follow")
     } else {
       parts = parts.append("○ Follow")
     }
-    if self.new_count > 0 { parts = parts.append(f"New {self.new_count} (G)") }
+    let n = self.new_count()
+    if n > 0 { parts = parts.append(f"New {n} (G)") }
     parts.join(" ")
   }
 }

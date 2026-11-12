@@ -81,7 +81,7 @@ fn list_click() {
   assert app.screen == Screen.List
   let _ = app.Update(shim.Click(5, y1))
   assert app.screen == Screen.Conv
-  assert app.current.id == SID_B
+  assert app.current().id == SID_B
 }
 
 #[test("목록: 필터 입력 중 클릭은 고르기만 하고, 마우스는 입력값을 바꾸지 않는다")]
@@ -93,11 +93,11 @@ fn click_while_filtering() {
   let mut app = new_app(mouse_opts(root))
   let _ = app.Update(shim.WindowSize(100, 30))
   press(&app, ["/"])
-  assert app.filter_editing
+  assert app.filter_editing()
   let y0 = row_y(&app, 0)
   let _ = app.Update(shim.Click(5, y0))
   assert app.screen == Screen.List
-  assert app.filter_editing
+  assert app.filter_editing()
   assert app.filter == ""
   wheel(&app, true, 1)
   assert app.cursor == 1
@@ -135,11 +135,11 @@ fn conv_wheel() {
   // 삭제 확인 모달 중에는 본문이 움직이지 않는다
   wheel(&app, false, 1000)
   press(&app, ["D"])
-  assert app.modal.is_some()
+  assert app.delete_plan().is_some()
   wheel(&app, true, 1)
   assert app.vp.YOffset() == 0
   press(&app, ["n"])
-  assert app.modal.is_none()
+  assert app.delete_plan().is_none()
   assert app.screen == Screen.Conv
 }
 
@@ -152,10 +152,10 @@ fn wheel_while_searching() {
   let mut app = new_app(mouse_opts(root))
   let _ = app.Update(shim.WindowSize(80, 8))
   press(&app, ["enter", "/", "greet"])
-  assert app.search_editing
+  assert app.search_editing()
   wheel(&app, true, 1)
   assert app.vp.YOffset() == WHEEL_LINES
-  assert app.search_editing
+  assert app.search_editing()
   assert app.input.Value() == "greet"
 }
 
@@ -169,14 +169,14 @@ fn help_wheel() {
   let _ = app.Update(shim.WindowSize(80, 24))
   press(&app, ["?"])
   wheel(&app, true, 1)
-  assert app.help_top == WHEEL_LINES
+  assert app.help_top() == WHEEL_LINES
   assert app.cursor == 0
   wheel(&app, true, 1000)
   let (body, h) = app.help_rows()
-  assert app.help_top == body.length() - h
+  assert app.help_top() == body.length() - h
   wheel(&app, false, 1000)
-  assert app.help_top == 0
-  assert app.help
+  assert app.help_top() == 0
+  assert app.help_open()
 }
 
 #[test("창이 너무 작으면 마우스를 무시한다")]

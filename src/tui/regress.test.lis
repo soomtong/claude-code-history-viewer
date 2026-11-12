@@ -1,0 +1,184 @@
+// 구조 정리 때 고친 결함과 새 경로(목록 지연 로딩)의 회귀 테스트.
+import "go:github.com/charmbracelet/x/ansi"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
+import "go:os"
+
+import "model"
+
+fn frame_rows(app: mut Ref<App>) -> int {
+  app.frame().split("\n").length()
+}
+
+#[test("프레임은 창 높이를 넘지 않는다: 최소 높이의 목록과 대화, 빈 목록 안내")]
+fn frame_fits_height() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  for h in [MIN_HEIGHT, 5, 6, 7, 12] {
+    let _ = app.Update(shim.WindowSize(80, h))
+    assert frame_rows(&app) == h
+  }
+  press(&app, ["enter"])
+  assert app.screen == Screen.Conv
+  for h in [MIN_HEIGHT, 5, 6, 7, 12] {
+    let _ = app.Update(shim.WindowSize(80, h))
+    assert frame_rows(&app) == h
+  }
+  let mut empty = new_app(Options { cwd: "/work/none", ..opts(root) })
+  for h in [MIN_HEIGHT, 5, 12] {
+    let _ = empty.Update(shim.WindowSize(80, h))
+    assert frame_rows(&empty) == h
+  }
+}
+
+#[test("모달은 낮은 창에서도 프레임을 넘기지 않고 키 안내를 남긴다")]
+fn modal_fits_height() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(100, 8))
+  // 2시간 전 세션(둘째)은 최근 수정 차단에 걸리지 않는다
+  press(&app, ["j", "D"])
+  assert app.delete_plan().is_some()
+  assert frame_rows(&app) == 8
+  assert ansi.Strip(app.frame()).contains("Delete y")
+  press(&app, ["esc"])
+  assert app.delete_plan().is_none()
+  assert app.sessions.length() == 2
+}
+
+#[test("세션 열기에 실패하면 지금 대화를 그대로 둔다")]
+fn open_failure_keeps_current() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(80, 30))
+  press(&app, ["enter"])
+  let msgs = app.messages().length()
+  let spans = app.spans().length()
+  assert msgs > 0
+  app.open_session(model.Session { id: "x", path: "/nonexistent/x.jsonl", .. })
+  assert app.status.contains("Read failed")
+  assert app.current().id == SID_A
+  assert app.messages().length() == msgs
+  // 다시 배치해도 내용이 남아 있다
+  press(&app, ["x", "x"])
+  assert app.spans().length() == spans
+}
+
+#[test("검색 중 보기 설정을 바꿔 매치가 줄어도 위치 표시가 범위 안에 있다")]
+fn match_index_stays_in_range() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(80, 30))
+  press(&app, ["enter", "x", "/", "e", "enter", "N"])
+  let n = app.matches().length()
+  assert n > 1
+  assert app.match_idx() == n - 1
+  press(&app, ["x"])
+  assert app.matches().length() < n
+  assert app.match_idx() < app.matches().length()
+}
+
+#[test("새 세션을 열면 앞 세션의 검색어가 남지 않는다")]
+fn open_resets_search() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(80, 30))
+  press(&app, ["enter", "/", "e", "enter"])
+  assert app.search() == "e"
+  press(&app, ["L"])
+  assert app.current().id == SID_B
+  assert app.search() == ""
+  assert app.matches().is_empty()
+}
+
+#[test("목록 지연 로딩: 화면을 먼저 띄우고 Init 의 Cmd 결과로 채운다")]
+fn deferred_list() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(Options { defer_list: true, ..opts(root) })
+  let _ = app.Update(shim.WindowSize(80, 20))
+  assert app.loading
+  assert app.sessions.is_empty()
+  assert ansi.Strip(app.frame()).contains("Loading sessions")
+  let Some(cmd) = app.Init() else {
+    assert false
+    return
+  }
+  let _ = app.Update(cmd())
+  assert !app.loading
+  assert app.sessions.length() == 2
+  assert app.selected().map_or("", |s| s.id) == SID_A
+  assert app.Init().is_none()
+}
+
+#[test("목록 지연 로딩: 읽는 동안 범위를 바꾸면 늦게 온 결과는 버린다")]
+fn deferred_list_stale() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(Options { defer_list: true, ..opts(root) })
+  let _ = app.Update(shim.WindowSize(80, 20))
+  let Some(cmd) = app.Init() else {
+    assert false
+    return
+  }
+  press(&app, ["a"])
+  assert app.sessions.length() == 3
+  let _ = app.Update(cmd())
+  assert app.sessions.length() == 3
+}
+
+#[test("삭제하면 목록에서 그 한 건만 빠지고 선택은 같은 자리에 남는다")]
+fn delete_removes_one() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let trash = os.MkdirTemp("", "cci-trash-").unwrap_or("/nonexistent")
+  defer {
+    let _ = os.RemoveAll(trash)
+  }
+  let mut app = new_app(opts(root))
+  app.trash_root = trash
+  let _ = app.Update(shim.WindowSize(100, 30))
+  press(&app, ["j", "D", "y"])
+  assert app.status.contains("Moved to trash")
+  assert app.sessions.length() == 1
+  assert app.selected().map_or("", |s| s.id) == SID_A
+}
+
+#[test("도움말 안 이동 키는 다른 화면과 같은 단위로 움직인다")]
+fn help_nav_units() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = new_app(opts(root))
+  let _ = app.Update(shim.WindowSize(60, 14))
+  press(&app, ["?"])
+  let (body, h) = app.help_rows()
+  assert body.length() > 2 * h
+  press(&app, ["d"])
+  assert app.help_top() == max(h / 4, 1)
+  press(&app, ["g", "ctrl+d"])
+  assert app.help_top() == max(h / 2, 1)
+  press(&app, ["g", "ctrl+f"])
+  assert app.help_top() == h
+}

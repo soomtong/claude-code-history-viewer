@@ -40,7 +40,7 @@ fn rename_keymap() {
   let _ = app.Update(shim.WindowSize(100, 30))
   press(&app, ["R", "ctrl+u", "world"])
   press(&app, ["ctrl+a", "hello "])
-  let Some(r) = app.renaming else {
+  let Some(r) = app.renaming() else {
     assert false
     return
   }
@@ -48,13 +48,13 @@ fn rename_keymap() {
   // 커서는 "hello " 뒤
   assert ansi.Strip(app.frame()).contains("hello ▏world")
   press(&app, ["ctrl+k"])
-  assert app.renaming.map_or("", |x| x.input) == "hello "
+  assert app.renaming().map_or("", |x| x.input) == "hello "
   press(&app, ["ctrl+e", "big world", "alt+b", "ctrl+w"])
-  assert app.renaming.map_or("", |x| x.input) == "hello world"
+  assert app.renaming().map_or("", |x| x.input) == "hello world"
   press(&app, ["ctrl+a", "delete", "ctrl+d"])
-  assert app.renaming.map_or("", |x| x.input) == "llo world"
+  assert app.renaming().map_or("", |x| x.input) == "llo world"
   press(&app, ["esc"])
-  assert app.renaming.is_none()
+  assert app.renaming().is_none()
 }
 
 #[test("필터 입력: 커서 이동과 지우기, 다시 열면 기존 필터를 이어 편집")]
@@ -68,7 +68,7 @@ fn filter_keymap() {
   press(&app, ["/", "rett", "left", "left", "ctrl+h", "g"])
   assert app.filter == "rgtt"
   press(&app, ["ctrl+a", "delete", "ctrl+e", "backspace", "enter"])
-  assert !app.filter_editing
+  assert !app.filter_editing()
   assert app.filter == "gt"
   press(&app, ["/", "ctrl+w", "greet"])
   assert app.filter == "greet"
@@ -87,9 +87,9 @@ fn search_paste() {
   let _ = app.Update(shim.WindowSize(80, 10))
   press(&app, ["enter", "/"])
   let _ = app.Update(shim.Paste("greet\nfunc\tion"))
-  assert app.search == "greet func ion"
+  assert app.search() == "greet func ion"
   press(&app, ["ctrl+u", "greet"])
-  assert app.search == "greet"
-  assert !app.matches.is_empty()
+  assert app.search() == "greet"
+  assert !app.matches().is_empty()
   assert ansi.Strip(app.frame()).contains("/greet▏")
 }

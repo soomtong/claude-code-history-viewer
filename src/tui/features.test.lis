@@ -23,19 +23,19 @@ fn role_cycle() {
   defer {
     let _ = os.RemoveAll(root)
   }
-  assert app.spans.length() == 4
+  assert app.spans().length() == 4
   press(&app, ["r"])
   assert app.role == RoleFilter.User
   // 알림 줄과 헤더 보기 설정의 역할 값은 대문자로 시작한다 (0018)
   assert app.status == "Role: User"
   assert screen(&app).contains("Role User")
-  assert app.spans.length() == 2
-  assert app.spans.all(|s| s.prompt)
+  assert app.spans().length() == 2
+  assert app.spans().all(|s| s.prompt)
   press(&app, ["r"])
-  assert app.spans.length() == 2
+  assert app.spans().length() == 2
   assert !screen(&app).contains("Add a greet function")
   press(&app, ["r"])
-  assert app.spans.length() == 4
+  assert app.spans().length() == 4
 }
 
 #[test("토글: x 도구, c 코드, t thinking, P 디버그")]
@@ -103,22 +103,22 @@ fn search() {
   let mut app = new_app(opts(root))
   let _ = app.Update(shim.WindowSize(80, 4))
   press(&app, ["enter", "/", "h", "e", "l", "l", "o"])
-  assert app.search_editing
-  assert app.search == "hello"
-  assert app.matches.length() == 1
-  assert app.vp.YOffset() == app.matches[0]
+  assert app.search_editing()
+  assert app.search() == "hello"
+  assert app.matches().length() == 1
+  assert app.vp.YOffset() == app.matches()[0]
   press(&app, ["enter"])
-  assert !app.search_editing
+  assert !app.search_editing()
   assert screen(&app).contains("1/1")
   press(&app, ["/", "g", "r", "e", "e", "t", "enter"])
-  assert app.matches.length() >= 2
+  assert app.matches().length() >= 2
   let first = app.vp.YOffset()
   press(&app, ["n"])
   assert app.vp.YOffset() > first
   press(&app, ["N"])
   assert app.vp.YOffset() == first
   press(&app, ["esc"])
-  assert app.search == ""
+  assert app.search() == ""
   assert app.screen == Screen.Conv
   press(&app, ["esc"])
   assert app.screen == Screen.List

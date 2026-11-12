@@ -244,34 +244,27 @@ impl App {
     (body, h)
   }
 
-  /// 도움말 키: j/k 등은 상자 안 스크롤, 그 밖의 키는 닫기
-  pub fn on_help_key(self: mut Ref<Self>, k: string) {
+  /// 도움말 키: 이동 키는 상자 안 스크롤, 그 밖의 키는 닫기
+  pub fn on_help_key(self: mut Ref<Self>, top: int, k: string) {
+    let Some(n) = nav_of(k) else {
+      self.mode = Mode.Normal
+      return
+    }
+    let (body, h) = self.help_rows()
+    self.scroll_help(top, nav_delta(n, h, body.length()))
+  }
+
+  /// 도움말 상자 안을 delta 줄 움직인다 (키와 휠이 함께 쓴다)
+  pub fn scroll_help(self: mut Ref<Self>, top: int, delta: int) {
     let (body, h) = self.help_rows()
     let max_top = max(body.length() - h, 0)
-    match k {
-      "j" | "down" => self.help_top = min(self.help_top + 1, max_top),
-      "k" | "up" => self.help_top = max(self.help_top - 1, 0),
-      "d" | "ctrl+d" | "ctrl+f" | "pgdown" | "space" => self.help_top = min(
-        self.help_top + h,
-        max_top,
-      ),
-      "u" | "ctrl+u" | "ctrl+b" | "pgup" => self.help_top = max(
-        self.help_top - h,
-        0,
-      ),
-      "g" | "home" => self.help_top = 0,
-      "G" | "end" => self.help_top = max_top,
-      _ => {
-        self.help = false
-        self.help_top = 0
-      },
-    }
+    self.mode = Mode.Help { top: min(max(top + delta, 0), max_top) }
   }
 
   /// 도움말 상자. 제목은 위 테두리, 키 안내와 스크롤 위치는 아래 테두리에 둔다.
-  pub fn view_help(self: Ref<Self>) -> string {
+  pub fn view_help(self: Ref<Self>, help_top: int) -> string {
     let (body, h) = self.help_rows()
-    let top = min(self.help_top, max(body.length() - h, 0))
+    let top = min(help_top, max(body.length() - h, 0))
     let end = min(top + h, body.length())
     let scrolls = body.length() > h
     let mut groups = Slice.new<Slice<Hint>>()
@@ -282,6 +275,6 @@ impl App {
     for l in body {
       inner = max(inner, ansi.StringWidth(l))
     }
-    framed_box("키 바인딩", body[top..end], inner, groups, pos)
+    framed_box("키 바인딩", body[top..end], inner, groups, pos, st_border())
   }
 }

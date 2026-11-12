@@ -90,7 +90,7 @@ impl App {
     width: int,
     want_full: bool,
   ) -> (string, bool) {
-    let compact = self.compact()
+    let compact = self.narrow()
     let key = cache_key(i, m, width, self.toggles, compact)
     if let Some(r) = self.cache.get(key) { return (r, true) }
     if !needs_markdown(m) || self.md.is_none() || want_full {
@@ -108,13 +108,16 @@ impl App {
 
   /// 보이는 메시지를 배치해 viewport 내용과 spans 를 다시 만든다. 화면 맨 위 메시지는 유지한다.
   pub fn relayout_with(self: mut Ref<Self>, to_bottom: bool) {
+    let Some(c) = self.open else {
+      return
+    }
     let width = self.content_width()
     self.ensure_renderer(width)
     let h = self.vp_height()
     let y = self.vp.YOffset()
     let mut anchor_msg = -1
     let mut delta = 0
-    if let Some(s) = self.spans.get(self.span_at(y)) {
+    if let Some(s) = c.spans.get(span_index(c.spans, y)) {
       anchor_msg = s.msg
       delta = y - s.start
     }
@@ -125,7 +128,7 @@ impl App {
     let mut tight = Slice.new<bool>()
     let mut seps = Slice.new<string>()
     let mut prev_time = ""
-    let messages = self.conv.messages
+    let messages = c.conv.messages
     for (i, m) in messages.enumerate() {
       if !is_visible(m, self.toggles, self.role) { continue }
       let (r, f) = self.piece(i, m, width, false)
@@ -159,20 +162,20 @@ impl App {
       spans = layout_spans(msgs, prompts, pieces, full, tight)
       target = target_line(spans, anchor_msg, delta, to_bottom, h, y)
     }
-    self.spans = spans
+    c.spans = spans
     if pieces.is_empty() {
-      self.content = ""
-      self.plain_lines = []
-      self.matches = []
+      c.content = ""
+      c.plain_lines = []
+      c.matches = []
       self.vp.SetContent(st_faint().Render(
         "(표시할 메시지가 없습니다)  Role r | Show [T]hinking  [t]ool  [c]ode",
       ))
       self.vp.GotoTop()
       return
     }
-    self.content = join_pieces(pieces, tight)
-    self.plain_lines = []
-    self.vp.SetContent(self.content)
+    c.content = join_pieces(pieces, tight)
+    c.plain_lines = []
+    self.vp.SetContent(c.content)
     self.vp.SetYOffset(target)
     if self.search_active() { self.update_matches() }
   }
@@ -185,9 +188,9 @@ impl App {
   pub fn ensure_rendered(self: mut Ref<Self>) {
     let y = self.vp.YOffset()
     let h = self.vp_height()
-    let pending = self.spans.any(
-      |s| !s.full && s.start + s.lines >= y - h && s.start <= y + 2 * h,
-    )
+    let pending = self
+      .spans()
+      .any(|s| !s.full && s.start + s.lines >= y - h && s.start <= y + 2 * h)
     if pending { self.relayout() }
   }
 }

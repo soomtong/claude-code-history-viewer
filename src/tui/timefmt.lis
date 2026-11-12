@@ -1,0 +1,61 @@
+// 시각 표기: 목록의 짧은 시각, 대화의 시작~끝, 프롬프트 사이 시간 구분선.
+// 세션 파일의 시각은 RFC3339 문자열이고, 화면에는 현지 시각으로 보인다.
+import "go:time"
+
+pub fn fmt_time(ts: string, with_date: bool) -> string {
+  let layout = if with_date { "2006-01-02 15:04" } else { "15:04" }
+  time.Parse(time.RFC3339, ts).map_or("", |t| t.Local().Format(layout))
+}
+
+fn parse_local(ts: string) -> Option<time.Time> {
+  time.Parse(time.RFC3339, ts).ok().map(|t| t.Local())
+}
+
+/// 목록 항목 오른쪽 시각: 이틀 안이면 시:분, 올해면 월-일 시:분, 아니면 날짜
+pub fn short_time(ts: string, now: time.Time) -> string {
+  let Some(t) = parse_local(ts) else {
+    return ""
+  }
+  let day = t.Format("2006-01-02")
+  if day == now.Format("2006-01-02") || day == now
+    .AddDate(0, 0, -1)
+    .Format("2006-01-02") {
+    return t.Format("15:04")
+  }
+  if t.Year() == now.Year() { return t.Format("01-02 15:04") }
+  day
+}
+
+/// 대화의 시작~끝 시각. 같은 날이면 끝은 시:분만.
+pub fn time_range(first: string, last: string) -> string {
+  let Some(a) = parse_local(first) else {
+    return ""
+  }
+  let start = a.Format("2006-01-02 15:04")
+  let Some(b) = parse_local(last) else {
+    return start
+  }
+  if b.Sub(a) < time.Minute { return start }
+  let end = if a.Format("2006-01-02") == b.Format("2006-01-02") {
+    b.Format("15:04")
+  } else {
+    b.Format("2006-01-02 15:04")
+  }
+  f"{start} – {end}"
+}
+
+/// 프롬프트 앞 시간 구분선: 앞 메시지와 5분 이상 떨어졌을 때만. 날짜가 바뀌면 날짜도.
+pub fn time_gap_label(prev: string, cur: string) -> string {
+  let Some(a) = parse_local(prev) else {
+    return ""
+  }
+  let Some(b) = parse_local(cur) else {
+    return ""
+  }
+  if b.Sub(a) < (5 as time.Duration) * time.Minute { return "" }
+  if a.Format("2006-01-02") == b.Format("2006-01-02") {
+    b.Format("15:04")
+  } else {
+    b.Format("2006-01-02 15:04")
+  }
+}

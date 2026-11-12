@@ -8,7 +8,17 @@ import "go:os"
 /// 화면을 그릴 수 있는 최소 크기. 이보다 작으면 안내만 보여준다.
 pub const MIN_WIDTH = 24
 
-pub const MIN_HEIGHT = 3
+/// 화면 틀의 줄 수. view_list / view_conv / vp_height / list_row_at 이 함께 쓴다.
+pub const LIST_HEADER_ROWS = 2 // 헤더 띠 + 필터 줄
+
+pub const CONV_HEADER_ROWS = 3 // 헤더 띠 + 메타 줄 + 가로선
+
+pub const CONV_BODY_MIN = 3 // 이보다 본문이 좁아지면 대화 헤더를 접는다
+
+pub const FOOTER_ROWS = 1
+
+/// 목록이 한 줄이라도 보이는 높이
+pub const MIN_HEIGHT: int = LIST_HEADER_ROWS + 1 + FOOTER_ROWS
 
 /// light: 밝은 배경, dark: 어두운 배경에서 쓸 256색 번호
 fn fg(light: string, dark: string) -> lipgloss.Style {
@@ -107,22 +117,6 @@ pub fn over(s: lipgloss.Style, base: lipgloss.Style) -> lipgloss.Style {
   s.Inherit(base)
 }
 
-pub fn st_modal() -> lipgloss.Style {
-  lipgloss
-    .NewStyle()
-    .Border(lipgloss.RoundedBorder())
-    .BorderForeground(shim.Adaptive("160", "203"))
-    .Padding(0, 1)
-}
-
-pub fn st_box() -> lipgloss.Style {
-  lipgloss
-    .NewStyle()
-    .Border(lipgloss.RoundedBorder())
-    .BorderForeground(shim.Adaptive("26", "39"))
-    .Padding(0, 1)
-}
-
 /// 팀원 메시지 표식과 이름 색. Claude Code 가 팀원에게 주는 색 이름을 밝은/어두운 배경 쌍으로 옮긴다.
 /// 모르는 이름이면 흐리게 (0020).
 pub fn st_teammate(name: string) -> lipgloss.Style {
@@ -139,7 +133,7 @@ pub fn st_teammate(name: string) -> lipgloss.Style {
   }
 }
 
-/// 직접 그리는 테두리(framed_box)의 선 색. st_box 테두리와 같다.
+/// 모달 상자(framed_box)의 기본 선 색. 삭제 확인은 st_del 을 쓴다.
 pub fn st_border() -> lipgloss.Style {
   fg("26", "39")
 }

@@ -6,44 +6,52 @@ import "go:strings"
 
 impl App {
   pub fn search_active(self: Ref<Self>) -> bool {
-    self.search != ""
+    self.search() != ""
   }
 
   /// 렌더된 내용에서 검색어가 있는 줄 번호들을 다시 구한다.
   pub fn update_matches(self: mut Ref<Self>) {
+    let Some(c) = self.open else {
+      return
+    }
     let mut found = Slice.new<int>()
-    let q = strings.ToLower(self.search)
+    let q = strings.ToLower(c.search)
     if q != "" {
-      if self.plain_lines.is_empty() {
-        self.plain_lines = strings.ToLower(ansi.Strip(self.content)).split("\n")
+      if c.plain_lines.is_empty() {
+        c.plain_lines = strings.ToLower(ansi.Strip(c.content)).split("\n")
       }
-      for (i, line) in self.plain_lines.enumerate() {
+      for (i, line) in c.plain_lines.enumerate() {
         if line.contains(q) { found = found.append(i) }
       }
     }
-    self.matches = found
+    c.matches = found
+    // 토글이나 새 메시지로 매치 수가 줄어도 "8/3" 처럼 어긋나지 않게 한다
+    c.match_idx = min(c.match_idx, max(found.length() - 1, 0))
   }
 
   /// dir=1 이면 현재 줄 다음 매치, -1 이면 이전 매치. 끝에서는 반대쪽으로 돈다.
   pub fn jump_match(self: mut Ref<Self>, dir: int, include_current: bool) {
-    let n = self.matches.length()
+    let Some(c) = self.open else {
+      return
+    }
+    let n = c.matches.length()
     if n == 0 { return }
     let y = self.vp.YOffset()
     let mut pick = if dir > 0 { 0 } else { n - 1 }
     if dir > 0 {
-      for (i, line) in self.matches.enumerate() {
+      for (i, line) in c.matches.enumerate() {
         if line > y || (include_current && line == y) {
           pick = i
           break
         }
       }
     } else {
-      for (i, line) in self.matches.enumerate() {
+      for (i, line) in c.matches.enumerate() {
         if line < y { pick = i }
       }
     }
-    self.match_idx = pick
-    self.vp.SetYOffset(self.matches[pick])
+    c.match_idx = pick
+    self.vp.SetYOffset(c.matches[pick])
   }
 
   pub fn on_search_key(
@@ -53,11 +61,10 @@ impl App {
   ) -> Option<tea.Cmd> {
     match k {
       "esc" => {
-        self.search = ""
-        self.search_editing = false
-        self.matches = []
+        self.clear_search()
+        self.mode = Mode.Normal
       },
-      "enter" => self.search_editing = false,
+      "enter" => self.mode = Mode.Normal,
       _ => return Some(self.feed_input(key)),
     }
     None
@@ -71,16 +78,18 @@ impl App {
   }
 
   pub fn search_status(self: Ref<Self>) -> string {
-    if !self.search_editing && self.search == "" { return "" }
-    let count = if self.matches.is_empty() {
+    let search = self.search()
+    let matches = self.matches()
+    if !self.search_editing() && search == "" { return "" }
+    let count = if matches.is_empty() {
       "No match"
     } else {
-      f"{self.match_idx + 1}/{self.matches.length()}"
+      f"{self.match_idx() + 1}/{matches.length()}"
     }
-    let query = if self.search_editing {
-      self.input_line(self.search, max(self.width / 3, 12))
+    let query = if self.search_editing() {
+      self.input_line(search, max(self.width / 3, 12))
     } else {
-      self.search
+      search
     }
     f"/{query}  [{count}]"
   }

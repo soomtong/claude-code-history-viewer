@@ -23,11 +23,6 @@ pub fn input_view(value: string, pos: int, width: int) -> string {
 }
 
 impl App {
-  /// 입력창이 열려 있는지
-  pub fn editing(self: Ref<Self>) -> bool {
-    self.renaming.is_some() || self.filter_editing || self.search_editing
-  }
-
   /// 입력을 시작한다: 값을 채우고 커서를 끝에 둔다
   pub fn start_input(self: mut Ref<Self>, value: string) {
     self.input.Reset(value)
@@ -38,18 +33,23 @@ impl App {
   pub fn feed_input(self: mut Ref<Self>, msg: tea.Msg) -> tea.Cmd {
     let cmd = self.input.Update(msg)
     let v = self.input.Value()
-    if let Some(r) = self.renaming {
-      let mut next = r
-      next.input = v
-      self.renaming = Some(next)
-    } else if self.filter_editing {
-      if v != self.filter {
-        self.filter = v
-        self.apply_filter()
-      }
-    } else if self.search_editing && v != self.search {
-      self.search = v
-      self.search_changed()
+    match self.mode {
+      Mode.Rename(r) => self.mode = Mode.Rename(RenameInput { input: v, ..r }),
+      Mode.Filter => {
+        if v != self.filter {
+          self.filter = v
+          self.apply_filter()
+        }
+      },
+      Mode.Search => {
+        if let Some(c) = self.open {
+          if v != c.search {
+            c.search = v
+            self.search_changed()
+          }
+        }
+      },
+      Mode.Normal | Mode.Help { .. } | Mode.ConfirmDelete(_) => (),
     }
     cmd
   }
