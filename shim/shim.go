@@ -26,8 +26,13 @@ func SetDarkBackground(dark bool) { darkBackground = dark }
 func DarkBackground() bool { return darkBackground }
 
 // Adaptive 는 지금 배경 밝기에 맞는 색을 고른다. light/dark 는 lipgloss.Color 문자열(256색 번호 등)이다.
+// lipgloss.LightDark 클로저를 거치면 Lisette(0.13~)가 nil 아님을 증명하지 못해 Option 으로 바인딩한다.
+// lipgloss.Color 를 직접 돌려주어 color.Color 그대로 바인딩되게 한다 (docs/decisions/0026).
 func Adaptive(light, dark string) color.Color {
-	return lipgloss.LightDark(darkBackground)(lipgloss.Color(light), lipgloss.Color(dark))
+	if darkBackground {
+		return lipgloss.Color(dark)
+	}
+	return lipgloss.Color(light)
 }
 
 // TextInput 은 bubbles textinput 을 편집 엔진으로만 감싼 불투명 타입이다.
