@@ -192,9 +192,40 @@ pub fn split_teammate(text: string) -> Option<(Slice<model.Block>, string)> {
   Some((blocks, kept.join("\n\n")))
 }
 
+/// 붙여넣은 글을 Claude Code 가 감싸는 여는 태그: `<pasted_content id="63da">`. 닫는 태그에도 같은 id 가 붙는다.
+fn paste_open_re() -> Ref<regexp.Regexp> {
+  regexp.MustCompile(r"<pasted_content id=\x22([\w-]+)\x22>")
+}
+
+fn blank_run_re() -> Ref<regexp.Regexp> {
+  regexp.MustCompile(r"\n(?:[ \t]*\n){2,}")
+}
+
+/// user 텍스트에서 `<pasted_content id="..">` 포장 태그만 걷어 내고 붙여넣은 글은 남긴다 (0025).
+/// 같은 id 의 닫는 태그가 있는 쌍만 지운다: 사람이 태그 이름을 글로 쓴 경우는 건드리지 않는다.
+/// 태그가 있던 자리의 빈 줄 뭉치는 빈 줄 하나로 줄인다.
+pub fn strip_paste_tags(text: string) -> string {
+  if !text.contains("</pasted_content id=") { return text }
+  let mut t = text
+  let mut changed = false
+  for m in paste_open_re().FindAllStringSubmatch(text, -1) {
+    let open = m[0]
+    let close = f"</pasted_content id=\"{m[1]}\">"
+    if !t.contains(open) || !t.contains(close) { continue }
+    t = strings.Replace(t, open + "\n", "\n", 1)
+    t = strings.Replace(t, open, "\n", 1)
+    t = strings.Replace(t, "\n" + close, "\n", 1)
+    t = strings.Replace(t, close, "\n", 1)
+    changed = true
+  }
+  if !changed { return text }
+  strings.TrimSpace(blank_run_re().ReplaceAllString(t, "\n\n"))
+}
+
 /// user 텍스트 하나를 블록으로: 메타, 팀원 메시지(+남은 글), 일반 글. 두 번째 값은 프롬프트로 셀 글("" 이면 없음).
-fn user_text_blocks(t: string, is_meta: bool) -> (Slice<model.Block>, string) {
-  if is_meta || is_meta_text(t) { return ([model.Block.Meta(t)], "") }
+fn user_text_blocks(raw: string, is_meta: bool) -> (Slice<model.Block>, string) {
+  if is_meta || is_meta_text(raw) { return ([model.Block.Meta(raw)], "") }
+  let t = strip_paste_tags(raw)
   let Some((tm, rest)) = split_teammate(t) else {
     return ([model.Block.Text(t)], t)
   }

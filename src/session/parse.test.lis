@@ -149,3 +149,29 @@ fn compact_summary() {
   assert !body.contains("system-reminder")
   assert !body.contains("This session is being continued")
 }
+
+#[test("붙여넣기 포장 태그(pasted_content)는 걷어 내고 붙여넣은 글은 남긴다")]
+fn strips_paste_tags() {
+  let wrapped = "릴리즈 했습니다.\n\n\n\n<pasted_content id=\"63da\">\n첫 줄\n\n둘째 줄\n</pasted_content id=\"63da\">\n"
+  assert strip_paste_tags(wrapped) == "릴리즈 했습니다.\n\n첫 줄\n\n둘째 줄"
+  // 붙여넣기만 있는 메시지, 뒤에 글이 이어지는 메시지
+  let only = "\n\n<pasted_content id=\"395a\">\nb := move a\n</pasted_content id=\"395a\">\n\n\n무엇을 가져가야 할까?"
+  assert strip_paste_tags(only) == "b := move a\n\n무엇을 가져가야 할까?"
+  // 닫는 태그가 없거나 id 가 다르면 사람이 쓴 글로 보고 그대로 둔다
+  let open_only = "태그 <pasted_content id=\"aaaa\"> 가 보인다"
+  assert strip_paste_tags(open_only) == open_only
+  let mismatch = "<pasted_content id=\"aaaa\">\nx\n</pasted_content id=\"bbbb\">"
+  assert strip_paste_tags(mismatch) == mismatch
+  assert strip_paste_tags("plain prompt") == "plain prompt"
+}
+
+#[test("붙여넣기 태그로 시작하는 프롬프트는 태그 없이 프롬프트와 제목이 된다")]
+fn paste_prompt_title() {
+  let mut conv = new_conversation(false)
+  conv.add_line(
+    "{\"type\": \"user\", \"uuid\": \"u1\", \"timestamp\": \"2026-11-12T00:00:00Z\", \"message\": {\"role\": \"user\", \"content\": \"\\n\\n<pasted_content id=\\\"e8cf\\\">\\nPassword:\\n26+1 records in\\n</pasted_content id=\\\"e8cf\\\">\\n\"}}",
+  )
+  assert conv.prompt_count == 1
+  assert conv.first_prompt == "Password:\n26+1 records in"
+  assert conv.messages[0].text() == "Password:\n26+1 records in"
+}
