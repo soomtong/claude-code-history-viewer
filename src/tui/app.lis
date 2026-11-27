@@ -170,12 +170,14 @@ impl App {
       self.on_files(changed.paths)
       return None
     }
-    // 마우스는 입력창이 열려 있어도 입력으로 넘기지 않는다. 휠과 클릭만 쓰고 나머지는 버린다.
+    // 마우스는 입력창이 열려 있어도 입력으로 넘기지 않는다. 휠, 클릭, 끌기, 놓기만 쓴다.
     // 마우스를 껐으면(--no-mouse) 혹시 들어온 이벤트도 버린다 (0024).
     if assert_type<tea.MouseMsg>(msg).is_some() {
       if !self.opts.mouse { return None }
       if let Some(m) = assert_type<tea.MouseWheelMsg>(msg) { self.on_wheel(m) }
       if let Some(m) = assert_type<tea.MouseClickMsg>(msg) { self.on_click(m) }
+      if let Some(m) = assert_type<tea.MouseMotionMsg>(msg) { self.on_drag(m) }
+      if assert_type<tea.MouseReleaseMsg>(msg).is_some() { self.on_release() }
       return None
     }
     // 붙여넣기는 키가 아니라(v2) 입력창이 열려 있고 화면이 보일 때만 넣는다 (0021)
@@ -221,6 +223,8 @@ impl App {
     let first = self.width == 80 && self.height == 24 && self.resize_gen == 0
     self.width = w
     self.height = h
+    // 폭이 바뀌면 줄바꿈이 달라지므로 드래그 선택은 옮기지 않고 지운다 (0028)
+    self.clear_selection()
     self.vp.SetSize(self.content_width(), self.vp_height())
     self.clamp_list()
     self.resize_gen += 1

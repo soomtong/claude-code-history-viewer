@@ -1,0 +1,163 @@
+import "go:github.com/charmbracelet/x/ansi"
+import "go:github.com/soomtong/claude-code-history-viewer/shim"
+import "go:os"
+import "go:strings"
+
+fn pos(line: int, col: int) -> TextPos {
+  TextPos { line, col }
+}
+
+fn sel_of(a: TextPos, h: TextPos) -> Selection {
+  Selection { anchor: a, head: h, dragging: false, moved: true }
+}
+
+/// 화면 y 줄의 본문 글자 (왼쪽 여백 1열과 스크롤바를 뺀다)
+fn body_text(app: mut Ref<App>, y: int) -> string {
+  let screen = ansi.Strip(app.frame()).split("\n")
+  strings.TrimRight(ansi.Cut(screen[y], 1, 1 + app.content_width()), " ")
+}
+
+/// 본문 첫 줄의 앞 10열을 끌어 고른다
+fn drag_once(app: mut Ref<App>) {
+  let top = app.body_top()
+  let _ = app.Update(shim.Click(1, top))
+  let _ = app.Update(shim.Drag(10, top))
+  let _ = app.Update(shim.Release(10, top))
+}
+
+/// 대화를 연 앱. 본문 첫 줄과 둘째 줄에 글자가 있도록 연다.
+fn conv_app(root: string, w: int, h: int) -> mut App {
+  let mut app = new_app(mouse_opts(root))
+  let _ = app.Update(shim.WindowSize(w, h))
+  press(&app, ["enter"])
+  app
+}
+
+#[test("선택 글자: 두 끝 포함, 끄는 방향과 무관, 한글 폭, 줄 끝 공백과 ANSI 는 뺀다")]
+fn selected_text_rules() {
+  let content = "hello \u{1b}[1mworld\u{1b}[m   \n안녕하세요    \n  end of it"
+  let fwd = sel_of(pos(0, 6), pos(2, 4))
+  assert selected_text(content, fwd) == "world\n안녕하세요\n  end"
+  let back = sel_of(pos(2, 4), pos(0, 6))
+  assert selected_text(content, back) == "world\n안녕하세요\n  end"
+  // 한 줄 안: 한글은 2열씩 (열 2..5 는 '녕하')
+  assert selected_text(content, sel_of(pos(1, 2), pos(1, 5))) == "녕하"
+  // 줄 끝 너머 공백만 고르면 빈 글자
+  assert selected_text(content, sel_of(pos(0, 20), pos(0, 30))) == ""
+  // 줄 끝 너머까지 끌어도 글자까지만
+  assert selected_text(content, sel_of(pos(0, 0), pos(0, 79))) == "hello world"
+  assert sel_cols(fwd, 3, 10).is_none()
+  assert sel_cols(fwd, 1, 10) == Some((0, 10))
+}
+
+#[test("대화: 끌면 선택, 화면 글자와 같은 내용, 하단 줄에 Copy 힌트, 반전 표시")]
+fn drag_selects_body() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = conv_app(root, 80, 14)
+  assert app.screen == Screen.Conv
+  let top = app.body_top()
+  let first = body_text(&app, top)
+  let second = body_text(&app, top + 1)
+  assert first != ""
+  let _ = app.Update(shim.Click(1, top))
+  let _ = app.Update(shim.Drag(40, top + 1))
+  let _ = app.Update(shim.Drag(79, top + 1))
+  let _ = app.Update(shim.Release(79, top + 1))
+  let Some(s) = app.selection() else {
+    assert false
+    return
+  }
+  assert !s.dragging
+  assert app.selection_text() == first + "\n" + second
+  let frame = app.frame()
+  assert frame.contains("\u{1b}[7m")
+  assert ansi.Strip(frame).contains("Copy y")
+}
+
+#[test("대화: 그냥 클릭은 선택이 아니고, 헤더 클릭은 선택을 시작하지 않는다")]
+fn click_is_not_selection() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = conv_app(root, 80, 14)
+  let top = app.body_top()
+  let _ = app.Update(shim.Click(5, top))
+  assert app.selection().is_some()
+  let _ = app.Update(shim.Release(5, top))
+  assert app.selection().is_none()
+  assert top > 0
+  let _ = app.Update(shim.Click(5, 0))
+  let _ = app.Update(shim.Drag(20, top))
+  assert app.selection().is_none()
+}
+
+#[test("대화: esc 는 선택을 먼저 지우고, 다음 esc 에 목록으로. 선택 없이 y 는 안내만")]
+fn esc_clears_selection() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = conv_app(root, 80, 14)
+  let top = app.body_top()
+  let _ = app.Update(shim.Click(1, top))
+  let _ = app.Update(shim.Drag(10, top))
+  let _ = app.Update(shim.Release(10, top))
+  assert app.selection().is_some()
+  press(&app, ["esc"])
+  assert app.selection().is_none()
+  assert app.screen == Screen.Conv
+  press(&app, ["y"])
+  assert app.status.contains("Nothing selected")
+  press(&app, ["esc"])
+  assert app.screen == Screen.List
+}
+
+#[test("대화: 스크롤해도 선택은 같은 글자, 본문 아래로 끌면 따라 스크롤한다")]
+fn selection_follows_scroll() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = conv_app(root, 80, 8)
+  let top = app.body_top()
+  let _ = app.Update(shim.Click(1, top))
+  let _ = app.Update(shim.Drag(30, top))
+  let _ = app.Update(shim.Release(30, top))
+  let text = app.selection_text()
+  assert text != ""
+  let _ = app.Update(shim.Wheel(10, 3, true))
+  assert app.vp.YOffset() == WHEEL_LINES
+  assert app.selection_text() == text
+  // 본문 아래(하단 줄)로 끌면 한 줄씩 내려간다
+  let _ = app.Update(shim.Click(1, top))
+  let y = app.vp.YOffset()
+  let _ = app.Update(shim.Drag(10, app.height - 1))
+  assert app.vp.YOffset() == y + 1
+  let Some(s) = app.selection() else {
+    assert false
+    return
+  }
+  assert s.dragging
+  assert s.head.line == y + app.vp_height()
+}
+
+#[test("대화: 보기 토글과 창 크기 변경은 선택을 지운다")]
+fn relayout_clears_selection() {
+  let root = make_root()
+  defer {
+    let _ = os.RemoveAll(root)
+  }
+  let mut app = conv_app(root, 80, 14)
+  drag_once(&app)
+  assert app.selection().is_some()
+  press(&app, ["t"])
+  assert app.selection().is_none()
+  drag_once(&app)
+  assert app.selection().is_some()
+  let _ = app.Update(shim.WindowSize(90, 14))
+  assert app.selection().is_none()
+}

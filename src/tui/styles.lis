@@ -102,6 +102,11 @@ pub fn st_sel_row() -> lipgloss.Style {
   lipgloss.NewStyle().Background(shim.Adaptive("253", "237"))
 }
 
+/// 대화 본문의 드래그 선택 영역. reverse 라 색이 꺼져도 보인다 (0028).
+pub fn st_select() -> lipgloss.Style {
+  lipgloss.NewStyle().Reverse(true)
+}
+
 /// 사용자 프롬프트 블록의 바탕 (표식 › 가 함께 붙는다)
 pub fn st_prompt() -> lipgloss.Style {
   lipgloss.NewStyle().Background(shim.Adaptive("255", "235"))

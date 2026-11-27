@@ -162,8 +162,10 @@ impl App {
       spans = layout_spans(msgs, prompts, pieces, full, tight)
       target = target_line(spans, anchor_msg, delta, to_bottom, h, y)
     }
+    c.sel = remap_selection(c.spans, spans, c.sel)
     c.spans = spans
     if pieces.is_empty() {
+      c.sel = None
       c.content = ""
       c.plain_lines = []
       c.matches = []

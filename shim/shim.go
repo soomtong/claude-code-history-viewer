@@ -204,3 +204,13 @@ func Wheel(x, y int, down bool) tea.MouseWheelMsg {
 func Click(x, y int) tea.MouseClickMsg {
 	return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}
 }
+
+// Drag 는 테스트용 왼쪽 버튼을 누른 채 끄는 메시지를 만든다.
+func Drag(x, y int) tea.MouseMotionMsg {
+	return tea.MouseMotionMsg{X: x, Y: y, Button: tea.MouseLeft}
+}
+
+// Release 는 테스트용 왼쪽 버튼 놓기 메시지를 만든다.
+func Release(x, y int) tea.MouseReleaseMsg {
+	return tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft}
+}

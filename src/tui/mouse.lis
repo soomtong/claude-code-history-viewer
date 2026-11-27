@@ -1,4 +1,4 @@
-// 마우스: 휠 스크롤과 목록 클릭 (docs/decisions/0024).
+// 마우스: 휠 스크롤과 목록 클릭 (docs/decisions/0024), 대화 본문 드래그 선택 (0028, select.lis).
 // 화면이 마우스를 잡는 동안 터미널의 드래그 선택은 shift(iTerm2 는 option)를 눌러야 한다.
 // 그래서 --no-mouse, 설정 mouse = false 로 끌 수 있게 했다.
 import "go:charm.land/bubbletea/v2"
@@ -30,7 +30,7 @@ impl App {
   }
 
   /// 왼쪽 클릭: 목록에서 항목을 고르고, 이미 고른 항목을 다시 누르면 연다.
-  /// 필터 입력 중에는 고르기만 한다. 그 밖의 화면과 모달에서는 무시한다.
+  /// 필터 입력 중에는 고르기만 한다. 대화 본문에서는 드래그 선택을 시작한다. 모달에서는 무시한다.
   pub fn on_click(self: mut Ref<Self>, m: tea.MouseClickMsg) {
     if m.Button != tea.MouseLeft || self.too_small() { return }
     // 필터 입력 중에는 고르기만 한다. 다른 입력창이나 모달이 떠 있으면 무시한다.
@@ -43,7 +43,10 @@ impl App {
       ),
     }
     if !usable { return }
-    if self.screen != Screen.List { return }
+    if self.screen == Screen.Conv {
+      if !select_only { self.start_select(m.X, m.Y) }
+      return
+    }
     let Some(row) = self.list_row_at(m.Y) else {
       return
     }

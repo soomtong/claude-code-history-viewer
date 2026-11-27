@@ -87,7 +87,8 @@ fn help_sections() -> Slice<HelpSection> {
         hk("o", "이어진 세션 열기"),
         hk("R", "제목 변경"),
         hk("D", "삭제"),
-        hk("y", "resume 명령 복사"),
+        hk("drag y", "본문 선택 / 선택 복사"),
+        hk("Y", "resume 명령 복사"),
       ],
     },
     HelpSection {

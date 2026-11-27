@@ -29,6 +29,7 @@ pub struct ConvView {
   pub follow: bool,
   pub new_count: int,
   announced_next: string,
+  pub sel: Option<Selection>, // 본문 드래그 선택 (0028)
 }
 
 /// 세션 파일을 읽어 대화 상태를 만든다. 읽기에 실패하면 아무것도 바뀌지 않는다.
@@ -44,6 +45,7 @@ fn load_conv(s: model.Session, follow: bool) -> Result<mut Ref<ConvView>, error>
     spans: [],
     plain_lines: [],
     matches: [],
+    sel: None,
     follow,
     announced_next,
     ..,
@@ -211,7 +213,9 @@ impl App {
         self.start_input("")
       },
       "esc" => {
-        if self.search_active() {
+        if self.selection().is_some() {
+          self.clear_selection()
+        } else if self.search_active() {
           self.clear_search()
         } else {
           self.back_to_list()
@@ -220,7 +224,8 @@ impl App {
       "h" | "left" | "backspace" => self.back_to_list(),
       "H" => self.open_adjacent(-1),
       "L" => self.open_adjacent(1),
-      "y" => self.copy_resume(self.current().id),
+      "y" => return self.copy_selection(),
+      "Y" => self.copy_resume(self.current().id),
       "F" => self.toggle_follow(),
       "o" => self.open_continued(),
       "r" => {
@@ -261,6 +266,8 @@ impl App {
   /// 보기 설정(역할, 토글)이 바뀐 뒤: 알리고 다시 배치한다
   fn view_changed(self: mut Ref<Self>, status: string) {
     self.notify(status)
+    // 토글과 역할은 메시지 줄 구성을 바꾸므로 선택을 옮기지 않고 지운다
+    self.clear_selection()
     self.relayout()
   }
 
@@ -355,6 +362,8 @@ impl App {
     let search = self.search_status()
     let hints = if self.search_editing() {
       [[hint("Confirm", "↵"), hint("Cancel", "esc")]]
+    } else if self.selection().is_some() {
+      [[hint("Copy", "y"), hint("Clear", "esc")], [hint("Help", "?")]]
     } else if search != "" {
       [[hint("Match", "n N"), hint("Clear", "esc")], [hint("Help", "?")]]
     } else {
@@ -390,9 +399,12 @@ impl App {
   fn body_view(self: Ref<Self>) -> string {
     let rows = self.vp.View().split("\n")
     let bar = self.scrollbar(rows.length())
+    let sel = self.selection()
+    let y0 = self.vp.YOffset()
     let mut out = Slice.new<string>()
     for (i, r) in rows.enumerate() {
-      out = out.append(" " + r + " " + bar[i])
+      let row = sel.map_or(r, |s| highlight_row(r, s, y0 + i))
+      out = out.append(" " + row + " " + bar[i])
     }
     out.join("\n")
   }
